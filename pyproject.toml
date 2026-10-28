@@ -1,0 +1,57 @@
+# Development environment only. Home Assistant installs the integration by
+# copying custom_components/switchbot_art_frame; its runtime requirements live
+# in that folder's manifest.json.
+
+[project]
+name = "ha-switchbot-art-frame"
+version = "0.1.0"
+description = "Home Assistant integration adding image management to a SwitchBot AI Art Frame"
+readme = "README.md"
+requires-python = ">=3.14.2"
+
+[dependency-groups]
+dev = [
+    # Each release pins one Home Assistant version; 0.13.372 is HA 2026.10.1.
+    "pytest-homeassistant-custom-component==0.13.372",
+    "PySwitchbot==2.9.0",
+    # Needed by HA's bluetooth and usb components, which the above doesn't install.
+    "bluetooth-adapters",
+    "habluetooth",
+    "aiousbwatcher",
+    "serialx",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "SLF", "UP", "W"]
+ignore = ["E501"]  # line length is left to the formatter
+
+[tool.ruff.lint.isort]
+# Home Assistant style: imports from homeassistant get their own block.
+force-sort-within-sections = true
+combine-as-imports = true
+split-on-trailing-comma = false
+known-first-party = ["custom_components"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "homeassistant",
+    "pytest-homeassistant",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.isort.sections]
+homeassistant = ["homeassistant"]
+pytest-homeassistant = ["pytest_homeassistant_custom_component"]

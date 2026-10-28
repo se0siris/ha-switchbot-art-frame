@@ -1,0 +1,16 @@
+delete_image:
+  target:
+    entity:
+      integration: switchbot_art_frame
+      domain: sensor
+  fields:
+    image:
+      required: true
+      example: last
+      selector:
+        select:
+          custom_value: true
+          options:
+            - first
+            - last
+            - current

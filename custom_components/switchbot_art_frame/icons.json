@@ -1,0 +1,14 @@
+{
+  "entity": {
+    "sensor": {
+      "local_images": {
+        "default": "mdi:image-multiple"
+      }
+    }
+  },
+  "services": {
+    "delete_image": {
+      "service": "mdi:image-remove"
+    }
+  }
+}

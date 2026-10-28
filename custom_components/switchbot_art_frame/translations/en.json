@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Choose an Art Frame",
+        "description": "Pick an Art Frame that is already set up in the SwitchBot Bluetooth integration.",
+        "data": {
+          "switchbot_entry_id": "Art Frame"
+        }
+      }
+    },
+    "abort": {
+      "no_art_frames": "No Art Frames found. Set the frame up in the SwitchBot Bluetooth integration first.",
+      "already_configured": "Every Art Frame is already set up here."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "local_images": {
+        "name": "Local images",
+        "state_attributes": {
+          "image_ids": { "name": "Image IDs" },
+          "current_image_id": { "name": "Current image ID" },
+          "free_slots": { "name": "Free slots" }
+        }
+      }
+    }
+  },
+  "services": {
+    "delete_image": {
+      "name": "Delete image",
+      "description": "Deletes one image stored on the Art Frame. If it is the image on display, the frame switches to the next image first.",
+      "fields": {
+        "image": {
+          "name": "Image",
+          "description": "An image ID from the sensor's Image IDs attribute, or first, last or current (first and last follow the order the frame lists them in)."
+        }
+      }
+    }
+  }
+}

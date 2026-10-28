@@ -1,0 +1,79 @@
+"""SwitchBot Art Frame Tools.
+
+Adds image management to an Art Frame that is already set up with the core
+SwitchBot Bluetooth integration. It reuses that integration's connected device
+(and so its encryption key and Bluetooth routing) rather than holding its own.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from switchbot import SwitchbotArtFrame
+
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
+
+from .const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
+from .services import async_setup_services
+
+if TYPE_CHECKING:
+    from homeassistant.components.switchbot.coordinator import (
+        SwitchbotDataUpdateCoordinator,
+    )
+
+PLATFORMS = [Platform.SENSOR]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+type ArtFrameConfigEntry = ConfigEntry[SwitchbotDataUpdateCoordinator]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register actions."""
+    async_setup_services(hass)
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> bool:
+    """Attach to the core SwitchBot entry for this frame."""
+    core_entry = hass.config_entries.async_get_entry(
+        entry.data[CONF_SWITCHBOT_ENTRY_ID]
+    )
+    if core_entry is None:
+        raise ConfigEntryError(
+            "The SwitchBot Bluetooth entry for this frame no longer exists; "
+            "remove this entry and add it again"
+        )
+    if core_entry.state is not ConfigEntryState.LOADED:
+        raise ConfigEntryNotReady(
+            f"Waiting for SwitchBot Bluetooth entry '{core_entry.title}' to load"
+        )
+
+    coordinator = core_entry.runtime_data
+    if not isinstance(coordinator.device, SwitchbotArtFrame):
+        raise ConfigEntryError(f"'{core_entry.title}' is not an Art Frame")
+    entry.runtime_data = coordinator
+
+    # Our entities hold the core entry's coordinator. When that entry unloads
+    # (reload, update, removal) the coordinator is replaced, so reload too.
+    @callback
+    def _core_state_changed() -> None:
+        if core_entry.state is ConfigEntryState.LOADED or hass.is_stopping:
+            return
+        if entry.state is ConfigEntryState.LOADED:
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    entry.async_on_unload(core_entry.async_on_state_change(_core_state_changed))
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> bool:
+    """Unload a config entry."""
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
