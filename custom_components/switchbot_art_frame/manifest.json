@@ -2,6 +2,8 @@
   "domain": "switchbot_art_frame",
   "name": "SwitchBot Art Frame Tools",
   "after_dependencies": [
+    "frontend",
+    "http",
     "switchbot"
   ],
   "codeowners": [],
@@ -9,5 +11,5 @@
   "integration_type": "device",
   "iot_class": "local_push",
   "requirements": [],
-  "version": "0.4.1"
+  "version": "0.5.0"
 }

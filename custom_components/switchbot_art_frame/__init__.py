@@ -8,6 +8,7 @@ SwitchBot Bluetooth integration. It reuses that integration's connected device
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from switchbot import SwitchbotArtFrame
@@ -46,10 +47,31 @@ class ArtFrameData:
 type ArtFrameConfigEntry = ConfigEntry[ArtFrameData]
 
 
+CARD_URL = f"/{DOMAIN}/art-frame-card.js"
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register actions."""
+    """Register actions, and serve and load the dashboard card."""
     async_setup_services(hass)
+    await _async_register_card(hass)
     return True
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the card and add it to the frontend, so it needs no resource."""
+    if "http" not in hass.config.components or "frontend" not in hass.config.components:
+        return  # e.g. in tests
+    from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
+    from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
+    from homeassistant.loader import async_get_integration  # noqa: PLC0415
+
+    version = (await async_get_integration(hass, DOMAIN)).version
+    path = Path(__file__).parent / "frontend" / "art-frame-card.js"
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(path), cache_headers=False)]
+    )
+    # The version busts the browser cache when the integration is updated.
+    add_extra_js_url(hass, f"{CARD_URL}?v={version}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> bool:
