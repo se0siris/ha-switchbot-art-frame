@@ -7,11 +7,33 @@
         "data": {
           "switchbot_entry_id": "Art Frame"
         }
+      },
+      "account": {
+        "title": "SwitchBot account (optional)",
+        "description": "Needed only for Show image from URL, which puts new images on the frame without the SwitchBot app, and to keep SwitchBot's cloud album in step when images are deleted. Uses SwitchBot's private app API (as PySwitchbot does to get encryption keys); it isn't officially supported and could change. Google or Apple sign-in accounts won't work. Leave blank to skip.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "SwitchBot account",
+        "description": "Add, change or remove (leave both blank) the SwitchBot account used for Show image from URL and for deleting images from SwitchBot's cloud album.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
       }
     },
     "abort": {
       "no_art_frames": "No Art Frames found. Set the frame up in the SwitchBot Bluetooth integration first.",
-      "already_configured": "Every Art Frame is already set up here."
+      "already_configured": "Every Art Frame is already set up here.",
+      "reconfigure_successful": "Saved."
+    },
+    "error": {
+      "invalid_auth": "SwitchBot didn't accept that email and password.",
+      "account_incomplete": "Enter both email and password, or leave both blank.",
+      "frame_not_in_account": "Logged in, but this frame isn't in that SwitchBot account."
     }
   },
   "entity": {
@@ -64,6 +86,20 @@
         "image_url": {
           "name": "Image URL",
           "description": "Web address of the image. SwitchBot's servers fetch it, so it must be reachable from the internet."
+        }
+      }
+    },
+    "show_image_from_url": {
+      "name": "Show image from URL",
+      "description": "Uploads an image to SwitchBot's cloud and has the frame fetch and display it, without the SwitchBot app. Deletes the oldest image first if the frame is full. Needs a SwitchBot account added to this integration.",
+      "fields": {
+        "image_url": {
+          "name": "Image URL",
+          "description": "Web address of the image. SwitchBot's servers fetch it, so it must be reachable from the internet."
+        },
+        "make_room": {
+          "name": "Make room",
+          "description": "If the frame already holds 10 images, delete the oldest first."
         }
       }
     }

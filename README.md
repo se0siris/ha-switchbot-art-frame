@@ -8,9 +8,13 @@ integration:
   with `image_ids`, `current_image_id` and `free_slots` attributes.
 - **`switchbot_art_frame.delete_image`** action: deletes one stored image over
   Bluetooth.
-- **`switchbot_art_frame.download_image`** action (experimental): tells the
-  frame to fetch the image most recently uploaded to SwitchBot's cloud, the
-  same as tapping Sync in the app. No hub or phone needed.
+- **`switchbot_art_frame.show_image_from_url`** action: puts a new image on
+  the frame from a web address without the SwitchBot app, a hub or a phone.
+  Needs your SwitchBot account (see below).
+- **`switchbot_art_frame.download_image`** action: tells the frame to fetch an
+  image from SwitchBot's cloud by its ID (used by `show_image_from_url`).
+- **`switchbot_art_frame.upload_image`** action (experimental): uploads an
+  image to SwitchBot's cloud for the frame and returns SwitchBot's reply.
 
 It holds no keys or connections of its own. It uses the core integration's
 connected device, so commands are encrypted with the key that integration
@@ -27,6 +31,18 @@ Built and tested against Home Assistant 2026.10.1 (PySwitchbot 2.9.0).
    Tools**, and pick the frame.
 
 The sensor appears on the existing Art Frame device page.
+
+### SwitchBot account (optional)
+
+`show_image_from_url`, and keeping SwitchBot's cloud album in step when you
+delete images, need your SwitchBot account email and password. Add them when
+setting up, or later with **Reconfigure** on the integration's entry. They're
+stored in Home Assistant's config like other integrations' credentials.
+
+This uses SwitchBot's private app API (the one PySwitchbot already uses to get
+encryption keys), found by reading the app's Art Frame module. It isn't
+supported by SwitchBot, could change without notice, and using it may be
+against their terms. Google or Apple sign-in accounts won't work.
 
 ## delete_image
 
@@ -50,40 +66,51 @@ in it means nothing was deleted.
 
 `homeassistant.update_entity` on the sensor re-reads the frame's status.
 
-### Example: make room before a cloud upload
+`show_image_from_url` makes room automatically, so you rarely need to call
+`delete_image` yourself.
+
+## show_image_from_url
+
+Target the Local images sensor and give `image_url` (SwitchBot's servers
+fetch it, so it must be reachable from the internet). It:
+
+1. removes cloud album entries for images no longer on the frame (left over
+   from deletes made outside the app), so they don't count against the
+   cloud's 10-image limit;
+2. if the frame is full, deletes its oldest image, on the frame and in the
+   cloud (set `make_room: false` to fail instead);
+3. uploads the image through SwitchBot Cloud's API (the same call as
+   `switchbot_cloud.upload_art_frame_image`; needs the SwitchBot Cloud
+   integration);
+4. finds the ID SwitchBot gave it in the frame's cloud album;
+5. tells the frame over Bluetooth to download that ID (it fetches the image
+   over its own Wi-Fi, about 25 s) and shows it.
+
+It returns `image_id`, `image_ids`, `current_image_id`, `progress`,
+`deleted_image_id` and `removed_cloud_leftovers`.
 
 ```yaml
-sequence:
-  - action: homeassistant.update_entity
-    target:
-      entity_id: sensor.art_frame_eeff_local_images
-  - if:
-      - condition: numeric_state
-        entity_id: sensor.art_frame_eeff_local_images
-        above: 9
-    then:
-      - action: switchbot_art_frame.delete_image
-        target:
-          entity_id: sensor.art_frame_eeff_local_images
-        data:
-          image: oldest
-  # ...then your existing switchbot_cloud.upload_art_frame_image step
+action: switchbot_art_frame.show_image_from_url
+target:
+  entity_id: sensor.art_frame_eeff_local_images
+data:
+  image_url: https://images.metmuseum.org/CRDImages/as/original/DP121552.jpg
 ```
 
-## download_image (experimental)
+## download_image
 
-Uploading with `switchbot_cloud.upload_art_frame_image` only puts the image in
-SwitchBot's cloud; without a SwitchBot hub, the frame doesn't find out about it
-until the app syncs. This action does the sync: it sends the frame the commands
-the app sends, and the frame downloads the image over its own Wi-Fi.
+Tells the frame to fetch an image that's already in SwitchBot's cloud for it.
+`image_id` must be the ID SwitchBot assigned (the frame asks the cloud for that
+ID; any other ID fails with download state 3). `show` defaults to `true`.
 
-Optional fields: `image_id` (1-255, default: an unused one) and `show`
-(default `true`). It waits for the download to finish (the app's took about
-25 s), and returns `image_id`, `image_ids`, `current_image_id` and the
-`progress` percentages it saw. It fails if the frame already holds 10 images.
+## upload_image (experimental)
 
-Still to be confirmed: that the frame accepts an ID chosen by HA rather than the
-app, and how long after a cloud upload the image is ready to fetch.
+Uploads the image at `image_url` to SwitchBot's cloud for the frame, through
+the SwitchBot Cloud integration, and returns SwitchBot's reply as
+`cloud_response`. It makes the same call as
+`switchbot_cloud.upload_art_frame_image`, which discards the reply. The frame
+doesn't fetch the image until it's told to with `download_image`;
+`show_image_from_url` does the whole thing.
 
 ## How it works
 
@@ -92,9 +119,9 @@ Bluetooth HCI snoop log and decrypted with the frame's key:
 
 ```
 570F7A0102{image_id}     delete image   (reply: 01 <image_id> 1E)
-570F7A00                 sent before a download (purpose unknown)
+570F7A00                 start Wi-Fi (the app's comment: "trigger device to connect")
 570F7A0101{image_id}     download pending cloud image, store as image_id
-570F7B00                 download progress (state, image list, percent)
+570F7B00                 download progress (state 0 idle, 1 busy, 2 done, 3 failed)
 570F7A02{image_id}       show image     (already in PySwitchbot)
 5702                     status         (already in PySwitchbot)
 ```
@@ -102,11 +129,26 @@ Bluetooth HCI snoop log and decrypted with the frame's key:
 ## Caveats
 
 - It relies on internals of the core SwitchBot integration and PySwitchbot
-  (the coordinator in `runtime_data` and the device's `_send_command`). An HA
-  update could break it; the fix is usually small.
-- A Bluetooth delete doesn't tell SwitchBot's cloud. How the app's album
-  view reacts to that is untested.
+  (the coordinator in `runtime_data` and the device's `_send_command`), and of
+  the SwitchBot Cloud integration (its API client's `_request`, for uploads).
+  An HA update could break it; the fix is usually small.
+- Without an account, a Bluetooth delete doesn't tell SwitchBot's cloud, and
+  the app shows the image as waiting to sync. With an account, `delete_image`
+  also removes it from the cloud album (as the app does).
+- New images still come from SwitchBot's cloud: the frame downloads them over
+  its own Wi-Fi. If SwitchBot's servers or private API change or go away,
+  uploading stops working; images already on the frame are unaffected.
 - If the core SwitchBot entry reloads, this integration reloads with it.
+
+Private API calls used (host `wonderlabs.<region>.api.switchbot.net`, after
+logging in at `account.api.switchbot.net`), all with `deviceID` (the frame's
+MAC) and `groupID` (its SwitchBot home):
+
+```
+device/artframe/api/v1/images/list     album: id, imageIndex, status (0 pending, 1 synced)
+device/artframe/api/v1/images/delete   {imageIndexList, deleteAll}
+productbiz/v1/slideshow/syncDeletedImages   {imageIndexes, deleteAll}
+```
 
 ## Tests
 

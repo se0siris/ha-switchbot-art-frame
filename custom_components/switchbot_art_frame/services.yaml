@@ -46,3 +46,19 @@ upload_image:
       required: true
       selector:
         text:
+
+show_image_from_url:
+  target:
+    entity:
+      integration: switchbot_art_frame
+      domain: sensor
+  fields:
+    image_url:
+      required: true
+      selector:
+        text:
+    make_room:
+      required: false
+      default: true
+      selector:
+        boolean:

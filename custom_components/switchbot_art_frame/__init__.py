@@ -7,17 +7,20 @@ SwitchBot Bluetooth integration. It reuses that integration's connected device
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from switchbot import SwitchbotArtFrame
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import Platform
+from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
+from .account import SwitchBotAccount
 from .const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
 from .services import async_setup_services
 
@@ -30,7 +33,17 @@ PLATFORMS = [Platform.SENSOR]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-type ArtFrameConfigEntry = ConfigEntry[SwitchbotDataUpdateCoordinator]
+
+@dataclass
+class ArtFrameData:
+    """What the entities need: the core entry's coordinator, and optionally
+    a SwitchBot account session for the cloud album."""
+
+    coordinator: SwitchbotDataUpdateCoordinator
+    account: SwitchBotAccount | None
+
+
+type ArtFrameConfigEntry = ConfigEntry[ArtFrameData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -57,7 +70,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> 
     coordinator = core_entry.runtime_data
     if not isinstance(coordinator.device, SwitchbotArtFrame):
         raise ConfigEntryError(f"'{core_entry.title}' is not an Art Frame")
-    entry.runtime_data = coordinator
+    account = None
+    if entry.data.get(CONF_EMAIL) and entry.data.get(CONF_PASSWORD):
+        # Logs in on first use, so setup doesn't depend on SwitchBot's servers.
+        account = SwitchBotAccount(
+            async_get_clientsession(hass),
+            entry.data[CONF_EMAIL],
+            entry.data[CONF_PASSWORD],
+            coordinator.ble_device.address,
+        )
+    entry.runtime_data = ArtFrameData(coordinator, account)
 
     # Our entities hold the core entry's coordinator. When that entry unloads
     # (reload, update, removal) the coordinator is replaced, so reload too.

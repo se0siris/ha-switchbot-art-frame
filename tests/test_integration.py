@@ -1,5 +1,7 @@
 """Tests for the config flow, sensor and delete_image action in Home Assistant."""
 
+from unittest.mock import patch
+
 import pytest
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
@@ -11,6 +13,7 @@ from homeassistant.setup import async_setup_component
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.switchbot_art_frame.account import AuthError
 from custom_components.switchbot_art_frame.const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
 
 from .conftest import ADDRESS
@@ -44,6 +47,9 @@ async def test_config_flow(hass: HomeAssistant, core_entry) -> None:
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id}
     )
+    assert result["step_id"] == "account"
+    # Account left blank: created without one.
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Art Frame EEFF"
     assert result["data"] == {CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id}
@@ -54,6 +60,56 @@ async def test_config_flow(hass: HomeAssistant, core_entry) -> None:
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_config_flow_with_account(hass: HomeAssistant, core_entry) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id}
+    )
+    login = (
+        "custom_components.switchbot_art_frame.config_flow.SwitchBotAccount.async_login"
+    )
+    with patch(login, side_effect=AuthError("no")):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"email": "a@b.c", "password": "wrong"}
+        )
+    assert result["errors"] == {"base": "invalid_auth"}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"email": "a@b.c", "password": ""}
+    )
+    assert result["errors"] == {"base": "account_incomplete"}
+    with patch(login) as ok:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"email": "a@b.c", "password": "right"}
+        )
+    assert ok.called
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["email"] == "a@b.c"
+    assert result["data"]["password"] == "right"
+
+
+async def test_reconfigure_adds_account(
+    hass: HomeAssistant, setup_entry, core_entry
+) -> None:
+    assert setup_entry.runtime_data.account is None
+    result = await setup_entry.start_reconfigure_flow(hass)
+    assert result["step_id"] == "reconfigure"
+    login = (
+        "custom_components.switchbot_art_frame.config_flow.SwitchBotAccount.async_login"
+    )
+    with patch(login):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"email": "a@b.c", "password": "right"}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+    assert setup_entry.data["email"] == "a@b.c"
+    assert setup_entry.runtime_data.account is not None
+    assert setup_entry.runtime_data.account.mac == "AABBCCDDEEFF"
 
 
 async def test_config_flow_no_frames(hass: HomeAssistant) -> None:
@@ -244,3 +300,62 @@ async def test_upload_action_without_cloud(hass: HomeAssistant, setup_entry) -> 
             blocking=True,
             return_response=True,
         )
+
+
+def _sensor_entity(hass: HomeAssistant):
+    from homeassistant.helpers.entity_component import DATA_INSTANCES
+
+    return hass.data[DATA_INSTANCES]["sensor"].get_entity(ENTITY_ID)
+
+
+async def test_show_image_needs_account(hass: HomeAssistant, setup_entry) -> None:
+    with pytest.raises(ServiceValidationError, match="SwitchBot account"):
+        await hass.services.async_call(
+            DOMAIN,
+            "show_image_from_url",
+            {"entity_id": ENTITY_ID, "image_url": "https://example.com/a.jpg"},
+            blocking=True,
+        )
+
+
+async def test_delete_also_deletes_from_cloud(
+    hass: HomeAssistant, setup_entry, frame
+) -> None:
+    deleted = []
+
+    class Cloud:
+        async def async_delete_images(self, ids):
+            deleted.extend(ids)
+
+    _sensor_entity(hass)._account = Cloud()  # noqa: SLF001
+    response = await hass.services.async_call(
+        DOMAIN,
+        "delete_image",
+        {"entity_id": ENTITY_ID, "image": "oldest"},
+        blocking=True,
+        return_response=True,
+    )
+    assert deleted == [0x10]
+    assert response[ENTITY_ID]["cloud_deleted"] is True
+
+
+async def test_delete_cloud_failure_still_reports_frame_delete(
+    hass: HomeAssistant, setup_entry, frame
+) -> None:
+    from custom_components.switchbot_art_frame.account import AccountError
+
+    class Cloud:
+        async def async_delete_images(self, ids):
+            raise AccountError("servers down")
+
+    _sensor_entity(hass)._account = Cloud()  # noqa: SLF001
+    response = await hass.services.async_call(
+        DOMAIN,
+        "delete_image",
+        {"entity_id": ENTITY_ID, "image": "oldest"},
+        blocking=True,
+        return_response=True,
+    )
+    assert 0x10 not in frame.image_ids
+    assert response[ENTITY_ID]["cloud_deleted"] is False
+    assert "servers down" in response[ENTITY_ID]["cloud_error"]

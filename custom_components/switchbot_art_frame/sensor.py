@@ -18,6 +18,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .account import AccountError, SwitchBotAccount
 from .art_frame import (
     ArtFrameError,
     ImageSelectionError,
@@ -26,6 +27,9 @@ from .art_frame import (
     async_refresh,
 )
 from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES, SWITCHBOT_CLOUD_DOMAIN
+from .workflow import async_show_image_from_url
+
+FRAME_ERRORS = (ArtFrameError, SwitchbotOperationError, BleakError)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the sensor."""
-    coordinator = entry.runtime_data
+    coordinator = entry.runtime_data.coordinator
     # Show the sensor on the core integration's device rather than creating a
     # second device. Since devices are now owned by a single config entry,
     # this is done the way helper integrations do it: by linking the entity
@@ -54,7 +58,13 @@ async def async_setup_entry(
         (dr.CONNECTION_BLUETOOTH, coordinator.ble_device.address),
         entry.data[CONF_SWITCHBOT_ENTRY_ID],
     )
-    async_add_entities([ArtFrameLocalImagesSensor(coordinator, core_device)])
+    async_add_entities(
+        [
+            ArtFrameLocalImagesSensor(
+                coordinator, core_device, entry.runtime_data.account
+            )
+        ]
+    )
 
 
 class ArtFrameLocalImagesSensor(
@@ -70,10 +80,12 @@ class ArtFrameLocalImagesSensor(
         self,
         coordinator: SwitchbotDataUpdateCoordinator,
         core_device: dr.DeviceEntry | None,
+        account: SwitchBotAccount | None = None,
     ) -> None:
         """Initialise the sensor."""
         super().__init__(coordinator)
         self._device = coordinator.device
+        self._account = account
         self._attr_unique_id = f"{coordinator.base_unique_id}-local_images"
         self.device_entry = core_device
         if core_device is None:
@@ -121,9 +133,22 @@ class ArtFrameLocalImagesSensor(
             response = await async_delete_image(self._device, image)
         except ImageSelectionError as err:
             raise ServiceValidationError(str(err)) from err
-        except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
+        except FRAME_ERRORS as err:
             raise HomeAssistantError(f"Deleting the image failed: {err}") from err
         self.async_write_ha_state()
+        # Also remove it from the cloud album, as the app does, so the app
+        # doesn't offer to sync it back and it doesn't count towards the
+        # cloud's 10-image limit. Best effort: the frame delete has happened.
+        response["cloud_deleted"] = None
+        if self._account is not None:
+            try:
+                await self._account.async_delete_images([response["deleted_image_id"]])
+            except AccountError as err:
+                _LOGGER.warning("Image deleted from frame but not cloud: %s", err)
+                response["cloud_deleted"] = False
+                response["cloud_error"] = str(err)
+            else:
+                response["cloud_deleted"] = True
         return response
 
     async def async_upload_image(self, image_url: str) -> ServiceResponse:
@@ -133,6 +158,10 @@ class ArtFrameLocalImagesSensor(
         switchbot_cloud.upload_art_frame_image, through that integration's
         connection, but returns the API's reply instead of discarding it.
         """
+        return {"cloud_response": await self._async_cloud_upload(image_url)}
+
+    async def _async_cloud_upload(self, image_url: str) -> Any:
+        """Upload via the public Cloud API, through SwitchBot Cloud's connection."""
         cloud = next(
             (
                 entry
@@ -158,7 +187,7 @@ class ArtFrameLocalImagesSensor(
         except Exception as err:
             raise HomeAssistantError(f"SwitchBot Cloud upload failed: {err!r}") from err
         _LOGGER.debug("uploadImage reply: %s", body)
-        return {"cloud_response": body}
+        return body
 
     async def async_download_image(
         self, image_id: int | None = None, show: bool = True
@@ -168,7 +197,33 @@ class ArtFrameLocalImagesSensor(
             response = await async_download_image(self._device, image_id, show)
         except ImageSelectionError as err:
             raise ServiceValidationError(str(err)) from err
-        except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
+        except FRAME_ERRORS as err:
             raise HomeAssistantError(f"Downloading the image failed: {err}") from err
         self.async_write_ha_state()
+        return response
+
+    async def async_show_image_from_url(
+        self, image_url: str, make_room: bool = True
+    ) -> ServiceResponse:
+        """Handle the show_image_from_url action: the whole upload, no app."""
+        if self._account is None:
+            raise ServiceValidationError(
+                "Add your SwitchBot account to this integration first "
+                "(Settings > Devices & services > SwitchBot Art Frame Tools > "
+                "Reconfigure)"
+            )
+        try:
+            response = await async_show_image_from_url(
+                self._device,
+                self._account,
+                self._async_cloud_upload,
+                image_url,
+                make_room,
+            )
+        except ImageSelectionError as err:
+            raise ServiceValidationError(str(err)) from err
+        except (*FRAME_ERRORS, AccountError) as err:
+            raise HomeAssistantError(f"Showing the image failed: {err}") from err
+        finally:
+            self.async_write_ha_state()
         return response

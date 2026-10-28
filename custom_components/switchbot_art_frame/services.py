@@ -10,11 +10,13 @@ from .const import (
     ATTR_IMAGE,
     ATTR_IMAGE_ID,
     ATTR_IMAGE_URL,
+    ATTR_MAKE_ROOM,
     ATTR_SHOW,
     DOMAIN,
     IMAGE_KEYWORDS,
     SERVICE_DELETE_IMAGE,
     SERVICE_DOWNLOAD_IMAGE,
+    SERVICE_SHOW_IMAGE_FROM_URL,
     SERVICE_UPLOAD_IMAGE,
 )
 
@@ -56,4 +58,16 @@ def async_setup_services(hass: HomeAssistant) -> None:
         schema={vol.Required(ATTR_IMAGE_URL): cv.url},
         func="async_upload_image",
         supports_response=SupportsResponse.ONLY,
+    )
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_SHOW_IMAGE_FROM_URL,
+        entity_domain=SENSOR_DOMAIN,
+        schema={
+            vol.Required(ATTR_IMAGE_URL): cv.url,
+            vol.Optional(ATTR_MAKE_ROOM, default=True): cv.boolean,
+        },
+        func="async_show_image_from_url",
+        supports_response=SupportsResponse.OPTIONAL,
     )
