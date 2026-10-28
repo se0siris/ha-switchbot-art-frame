@@ -34,6 +34,10 @@ from .workflow import async_show_image
 
 FRAME_ERRORS = (ArtFrameError, SwitchbotOperationError, BleakError)
 
+# SwitchBot's upload endpoint returns 413 for large bodies. The limit isn't
+# documented; the error comes from Fastify, whose default is 1 MiB.
+MAX_BASE64_CHARS = 900_000
+
 _LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -257,6 +261,12 @@ class ArtFrameLocalImagesSensor(
                 "Reconfigure)"
             )
         parameter = await self._async_image_parameter(image_url, image_path, image_data)
+        # Check before anything changes (make_room may delete an image).
+        if len(parameter.get("imageBase64", "")) > MAX_BASE64_CHARS:
+            raise ServiceValidationError(
+                "The image is too large for SwitchBot's upload (keep it under "
+                "about 650 KB; a JPEG of 1200x1600 or smaller usually is)"
+            )
         try:
             response = await async_show_image(
                 self._device,

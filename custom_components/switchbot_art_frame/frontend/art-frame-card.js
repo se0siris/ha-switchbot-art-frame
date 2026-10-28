@@ -16,8 +16,10 @@ const CARD_TAG = "switchbot-art-frame-card";
 const MAX_IMAGES = 10;
 const LONG_SIDE = 1600;
 const SHORT_SIDE = 1200;
-// HA's websocket accepts messages up to aiohttp's default 4 MiB; leave room.
-const MAX_DATA_CHARS = 3_000_000;
+// SwitchBot's upload endpoint rejects large bodies (413). Its limit isn't
+// documented; the error comes from Fastify, whose default is 1 MiB, so stay
+// well under that.
+const MAX_DATA_CHARS = 900_000;
 
 class SwitchBotArtFrameCard extends HTMLElement {
   static getStubConfig(hass) {
@@ -215,7 +217,7 @@ class SwitchBotArtFrameCard extends HTMLElement {
     // PNG keeps flat colours clean for the frame's dithering; fall back to
     // JPEG for photos that would make the message too large.
     let data = canvas.toDataURL("image/png");
-    for (const q of [0.92, 0.85, 0.75]) {
+    for (const q of [0.92, 0.85, 0.75, 0.65, 0.5]) {
       if (data.length <= MAX_DATA_CHARS) break;
       data = canvas.toDataURL("image/jpeg", q);
     }
@@ -253,9 +255,28 @@ class SwitchBotArtFrameCard extends HTMLElement {
   }
 }
 
-if (!customElements.get(CARD_TAG)) {
-  customElements.define(CARD_TAG, SwitchBotArtFrameCard);
-  window.customCards = window.customCards || [];
+// HA's app installs a replacement custom element registry when it starts
+// (@webcomponents/scoped-custom-element-registry). This module can run before
+// that (e.g. when served from cache), and anything defined in the original
+// registry is then invisible to HA. So wait for HA's root element, which is
+// defined in the new registry, before defining the card.
+const defineCard = () => {
+  if (!window.customElements.get(CARD_TAG)) {
+    window.customElements.define(CARD_TAG, SwitchBotArtFrameCard);
+  }
+};
+
+const whenAppReady = async () => {
+  const deadline = Date.now() + 60_000;
+  while (!window.customElements.get("home-assistant") && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+};
+
+whenAppReady().then(defineCard);
+
+window.customCards = window.customCards || [];
+if (!window.customCards.some((c) => c.type === CARD_TAG)) {
   window.customCards.push({
     type: CARD_TAG,
     name: "SwitchBot Art Frame",

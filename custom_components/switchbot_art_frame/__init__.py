@@ -8,6 +8,7 @@ SwitchBot Bluetooth integration. It reuses that integration's connected device
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,15 +64,15 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         return  # e.g. in tests
     from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
     from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
-    from homeassistant.loader import async_get_integration  # noqa: PLC0415
 
-    version = (await async_get_integration(hass, DOMAIN)).version
     path = Path(__file__).parent / "frontend" / "art-frame-card.js"
+    content = await hass.async_add_executor_job(path.read_bytes)
     await hass.http.async_register_static_paths(
         [StaticPathConfig(CARD_URL, str(path), cache_headers=False)]
     )
-    # The version busts the browser cache when the integration is updated.
-    add_extra_js_url(hass, f"{CARD_URL}?v={version}")
+    # Tag the URL with a hash of the file, so browsers never reuse a cached
+    # copy of a different (or failed) version.
+    add_extra_js_url(hass, f"{CARD_URL}?v={hashlib.sha256(content).hexdigest()[:12]}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> bool:
