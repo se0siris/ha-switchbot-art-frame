@@ -24,7 +24,7 @@ download_image:
       domain: sensor
   fields:
     image_id:
-      required: false
+      required: true
       selector:
         number:
           min: 1

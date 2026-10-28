@@ -16,6 +16,8 @@ integration:
   image from SwitchBot's cloud by its ID (used by `show_image`).
 - **`switchbot_art_frame.upload_image`** action (experimental): uploads an
   image to SwitchBot's cloud for the frame and returns SwitchBot's reply.
+- **Dashboard card**: pick an image in the browser, preview it at the frame's
+  shape, and send it with `show_image`.
 
 It holds no keys or connections of its own. It uses the core integration's
 connected device, so commands are encrypted with the key that integration
@@ -80,7 +82,10 @@ Target the Local images sensor and give exactly one of:
 - `image_data`: the image itself, base64-encoded (or a `data:` URI).
 
 Files and data are sent to SwitchBot as `imageBase64`, so no public URL is
-needed. It:
+needed. SwitchBot rejects uploads larger than about 1 MiB, so a file or data
+must be under about 650 KB (900,000 base64 characters); a 1200×1600 JPEG
+usually is. Anything larger is rejected before anything on the frame changes.
+It:
 
 1. removes cloud album entries for images no longer on the frame (left over
    from deletes made outside the app), so they don't count against the
@@ -105,11 +110,39 @@ data:
   image_path: /config/www/frame/today.png
 ```
 
+## Dashboard card
+
+The integration serves and loads its own card, so there's no resource to add.
+Add it to a dashboard:
+
+```yaml
+type: custom:switchbot-art-frame-card
+entity: sensor.art_frame_eeff_local_images
+```
+
+Options:
+
+- `entity` (required): the frame's Local images sensor;
+- `orientation`: `portrait` (default) or `landscape`;
+- `fit`: `fill` (default; crops to fill the frame) or `fit` (shows the whole
+  image with white borders). Both can also be switched on the card;
+- `title`: the card's heading (default "Art Frame").
+
+The card shows how many images the frame holds, and warns when it's full that
+sending will replace the oldest. When idle it's just a "Choose an image" bar.
+Pick a PNG or JPEG and a preview opens at the frame's shape; check it, then
+**Show on frame**, or **Cancel** to close it. The card resizes the image to 1200×1600 in the browser and
+sends it with `show_image`, so it needs the SwitchBot account too. It sends a
+PNG where that fits under the upload limit and a JPEG otherwise. Sending takes
+about a minute.
+
 ## download_image
 
 Tells the frame to fetch an image that's already in SwitchBot's cloud for it.
-`image_id` must be the ID SwitchBot assigned (the frame asks the cloud for that
-ID; any other ID fails with download state 3). `show` defaults to `true`.
+`image_id` is required and must be the ID SwitchBot assigned (the frame asks
+the cloud for that ID; any other ID fails with download state 3). `show`
+defaults to `true`. `show_image` does the whole upload and finds the ID for
+you.
 
 ## upload_image (experimental)
 

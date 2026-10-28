@@ -78,21 +78,18 @@ async def test_download_sequence(frame, art_frame_device) -> None:
     assert sent[-1] == "570F7A021A"
 
 
-async def test_download_picks_free_id_and_can_skip_show(
-    frame, art_frame_device
-) -> None:
-    before = frame.image_ids[:9]
-    frame.image_ids = list(before)
-    result = await async_download_image(art_frame_device, show=False)
-    new_id = result["image_id"]
-    assert new_id not in before and 1 <= new_id <= 255
+async def test_download_can_skip_show(frame, art_frame_device) -> None:
+    frame.image_ids = frame.image_ids[:9]
+    result = await async_download_image(art_frame_device, 0x1A, show=False)
+    assert result["image_id"] == 0x1A
+    assert 0x1A in frame.image_ids
     assert frame.current == 0x19
     assert not any(k.startswith("570F7A02") for k in frame.sent)
 
 
 async def test_download_frame_full(frame, art_frame_device) -> None:
     with pytest.raises(ImageSelectionError, match="already holds"):
-        await async_download_image(art_frame_device)
+        await async_download_image(art_frame_device, 0x1A)
     assert "570F7A00" not in frame.sent
 
 

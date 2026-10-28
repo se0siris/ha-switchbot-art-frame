@@ -20,6 +20,8 @@ const SHORT_SIDE = 1200;
 // documented; the error comes from Fastify, whose default is 1 MiB, so stay
 // well under that.
 const MAX_DATA_CHARS = 900_000;
+const HINT =
+  '<span class="hint">Choose an image <small>(PNG or JPEG)</small></span>';
 
 class SwitchBotArtFrameCard extends HTMLElement {
   static getStubConfig(hass) {
@@ -45,7 +47,7 @@ class SwitchBotArtFrameCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 6;
+    return this._image ? 9 : 2;
   }
 
   get _size() {
@@ -65,27 +67,34 @@ class SwitchBotArtFrameCard extends HTMLElement {
         .count { color: var(--secondary-text-color); font-size: 0.9em; }
         .count.full { color: var(--warning-color, #e6a700); }
         .pick {
-          margin-top: 12px; width: 100%; aspect-ratio: ${w} / ${h}; max-height: 60vh;
+          margin-top: 12px; width: 100%; min-height: 56px;
           border: 2px dashed var(--divider-color); border-radius: 12px;
           display: flex; align-items: center; justify-content: center;
           background: var(--secondary-background-color); cursor: pointer;
           overflow: hidden; position: relative; box-sizing: border-box;
-          color: var(--secondary-text-color); text-align: center; padding: 0;
+          color: var(--secondary-text-color); text-align: center; padding: 12px;
           font: inherit;
         }
-        .pick.has-image { border-style: solid; }
+        .pick.has-image {
+          aspect-ratio: ${w} / ${h}; max-height: 60vh; border-style: solid; padding: 0;
+        }
         .pick canvas { width: 100%; height: 100%; display: block; }
         .pick[disabled] { cursor: progress; }
-        .controls { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+        .controls { display: none; gap: 8px; margin-top: 12px; align-items: center; }
+        .controls.shown { display: flex; }
+        .cancel {
+          margin-left: auto; border: 0; background: none; padding: 10px 12px;
+          color: var(--primary-color); font: inherit; cursor: pointer;
+        }
         .fit { display: flex; border: 1px solid var(--divider-color); border-radius: 8px; overflow: hidden; }
         .fit button { border: 0; padding: 8px 12px; background: none; color: var(--primary-text-color); font: inherit; cursor: pointer; }
         .fit button.on { background: var(--primary-color); color: var(--text-primary-color); }
         .send {
-          margin-left: auto; border: 0; border-radius: 8px; padding: 10px 18px;
+          border: 0; border-radius: 8px; padding: 10px 18px;
           background: var(--primary-color); color: var(--text-primary-color);
           font: inherit; font-weight: 500; cursor: pointer;
         }
-        .send[disabled], .fit button[disabled] { opacity: 0.5; cursor: default; }
+        .send[disabled], .fit button[disabled], .cancel[disabled] { opacity: 0.5; cursor: default; }
         .status { margin-top: 10px; min-height: 1.4em; font-size: 0.9em; color: var(--secondary-text-color); }
         .status.error { color: var(--error-color); }
         .status.ok { color: var(--success-color, var(--primary-color)); }
@@ -96,15 +105,14 @@ class SwitchBotArtFrameCard extends HTMLElement {
           <div class="title">${this._config.title ?? "Art Frame"}</div>
           <div class="count"></div>
         </div>
-        <button class="pick" type="button" aria-label="Choose an image">
-          <span class="hint">Tap to choose an image<br><small>PNG or JPEG</small></span>
-        </button>
+        <button class="pick" type="button" aria-label="Choose an image">${HINT}</button>
         <input type="file" accept="image/png,image/jpeg">
         <div class="controls">
           <div class="fit" role="group" aria-label="How to fit the image">
             <button type="button" data-fit="fill" title="Crop to fill the frame">Fill</button>
             <button type="button" data-fit="fit" title="Show the whole image, with white borders">Fit</button>
           </div>
+          <button class="cancel" type="button">Cancel</button>
           <button class="send" type="button" disabled>Show on frame</button>
         </div>
         <div class="status" role="status"></div>
@@ -115,6 +123,8 @@ class SwitchBotArtFrameCard extends HTMLElement {
       count: $(".count"),
       pick: $(".pick"),
       input: $("input"),
+      controls: $(".controls"),
+      cancel: $(".cancel"),
       send: $(".send"),
       status: $(".status"),
       fitButtons: [...this._root.querySelectorAll(".fit button")],
@@ -122,6 +132,10 @@ class SwitchBotArtFrameCard extends HTMLElement {
     this._els.pick.addEventListener("click", () => this._els.input.click());
     this._els.input.addEventListener("change", () => this._load(this._els.input.files[0]));
     this._els.send.addEventListener("click", () => this._send());
+    this._els.cancel.addEventListener("click", () => {
+      this._clear();
+      this._status("");
+    });
     for (const b of this._els.fitButtons) {
       b.addEventListener("click", () => {
         this._fit = b.dataset.fit;
@@ -151,15 +165,26 @@ class SwitchBotArtFrameCard extends HTMLElement {
   }
 
   _sync() {
-    const { pick, send, fitButtons } = this._els;
+    const { pick, controls, cancel, send, fitButtons } = this._els;
     for (const b of fitButtons) {
       b.classList.toggle("on", b.dataset.fit === this._fit);
       b.disabled = this._busy;
     }
     pick.disabled = this._busy;
+    // Idle, the card is just a "Choose an image" bar; the preview and its
+    // controls appear once an image is picked.
     pick.classList.toggle("has-image", !!this._image);
+    controls.classList.toggle("shown", !!this._image);
+    cancel.disabled = this._busy;
     send.disabled = this._busy || !this._image;
     send.textContent = this._busy ? "Sending\u2026" : "Show on frame";
+  }
+
+  /** Drop the picked image and collapse back to the "Choose an image" bar. */
+  _clear() {
+    this._image = null;
+    this._els.pick.innerHTML = HINT;
+    this._sync();
   }
 
   _status(text, kind = "") {
@@ -243,9 +268,8 @@ class SwitchBotArtFrameCard extends HTMLElement {
       const r = reply?.response?.[this._config.entity] ?? reply?.response ?? {};
       const replaced = r.deleted_image_id != null ? " (replaced the oldest image)" : "";
       this._status(`Done: it's on the frame${replaced}.`, "ok");
-      this._image = null;
-      this._els.pick.innerHTML =
-        '<span class="hint">Tap to choose an image<br><small>PNG or JPEG</small></span>';
+      this._busy = false;
+      this._clear();
     } catch (err) {
       this._status(`Failed: ${err?.message ?? err?.code ?? err}`, "error");
     } finally {

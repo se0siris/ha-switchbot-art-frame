@@ -67,11 +67,11 @@
     },
     "download_image": {
       "name": "Download image",
-      "description": "Tells the frame to fetch the image most recently uploaded to SwitchBot's cloud for it (for example with SwitchBot Cloud's Upload AI Art Frame image) and store it locally. The frame downloads over its own Wi-Fi; this replaces tapping Sync in the app.",
+      "description": "Tells the frame to fetch an image that's already in SwitchBot's cloud for it and store it locally. The frame downloads over its own Wi-Fi; this replaces tapping Sync in the app. Show image does the whole upload for you.",
       "fields": {
         "image_id": {
           "name": "Image ID",
-          "description": "ID to store the image under. Leave empty to pick an unused one."
+          "description": "The ID SwitchBot's cloud assigned to the image. Any other ID fails."
         },
         "show": {
           "name": "Show",

@@ -239,6 +239,20 @@ async def test_download_action(hass: HomeAssistant, setup_entry, frame) -> None:
 async def test_download_action_frame_full(hass: HomeAssistant, setup_entry) -> None:
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
+            DOMAIN,
+            "download_image",
+            {"entity_id": ENTITY_ID, "image_id": 26},
+            blocking=True,
+        )
+
+
+async def test_download_action_needs_image_id(
+    hass: HomeAssistant, setup_entry
+) -> None:
+    import probatio
+
+    with pytest.raises(probatio.Invalid):
+        await hass.services.async_call(
             DOMAIN, "download_image", {"entity_id": ENTITY_ID}, blocking=True
         )
 

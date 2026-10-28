@@ -44,7 +44,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_DOWNLOAD_IMAGE,
         entity_domain=SENSOR_DOMAIN,
         schema={
-            vol.Optional(ATTR_IMAGE_ID): vol.All(
+            vol.Required(ATTR_IMAGE_ID): vol.All(
                 vol.Coerce(int), vol.Range(min=1, max=255)
             ),
             vol.Optional(ATTR_SHOW, default=True): cv.boolean,

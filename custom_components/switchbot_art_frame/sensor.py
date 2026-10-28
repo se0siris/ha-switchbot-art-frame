@@ -202,7 +202,7 @@ class ArtFrameLocalImagesSensor(
         return body
 
     async def async_download_image(
-        self, image_id: int | None = None, show: bool = True
+        self, image_id: int, show: bool = True
     ) -> ServiceResponse:
         """Handle the download_image action."""
         try:

@@ -7,7 +7,6 @@ moved into PySwitchbot later.
 from __future__ import annotations
 
 import asyncio
-import random
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -121,11 +120,6 @@ async def async_delete_image(
     }
 
 
-def _pick_free_id(image_ids: list[int]) -> int:
-    """Choose an unused image ID. 0 is avoided: the frame uses it for 'none'."""
-    return random.choice([i for i in range(1, 256) if i not in image_ids])
-
-
 async def _send(device: SwitchbotArtFrame, key: str, what: str) -> bytes:
     result = await device._send_command(key)  # noqa: SLF001
     if not device._check_command_result(result, 0, {1}):  # noqa: SLF001
@@ -136,23 +130,21 @@ async def _send(device: SwitchbotArtFrame, key: str, what: str) -> bytes:
 
 
 async def async_download_image(
-    device: SwitchbotArtFrame, image_id: int | None = None, show: bool = True
+    device: SwitchbotArtFrame, image_id: int, show: bool = True
 ) -> dict[str, Any]:
-    """Tell the frame to fetch its pending image from SwitchBot's cloud.
+    """Tell the frame to fetch an image from SwitchBot's cloud.
 
     Replays what the app does when you tap Sync: the frame downloads over its
-    own Wi-Fi and stores the image under the ID we give it. The image must
-    already be uploaded to SwitchBot's cloud (for example with
-    switchbot_cloud.upload_art_frame_image).
+    own Wi-Fi. The image must already be in SwitchBot's cloud, and image_id
+    must be the ID the cloud assigned it: the frame asks the cloud for that
+    ID, and any other fails (download state 3).
     """
     image_ids, _ = await async_refresh(device)
     if len(image_ids) >= MAX_LOCAL_IMAGES:
         raise ImageSelectionError(
             f"The frame already holds {MAX_LOCAL_IMAGES} images; delete one first"
         )
-    if image_id is None:
-        image_id = _pick_free_id(image_ids)
-    elif image_id in image_ids:
+    if image_id in image_ids:
         raise ImageSelectionError(f"Image ID {image_id} is already on the frame")
     elif not 1 <= image_id <= 255:
         raise ImageSelectionError("Image ID must be between 1 and 255")
