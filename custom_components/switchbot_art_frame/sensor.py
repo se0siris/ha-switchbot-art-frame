@@ -21,6 +21,7 @@ from .art_frame import (
     ArtFrameError,
     ImageSelectionError,
     async_delete_image,
+    async_download_image,
     async_refresh,
 )
 from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES
@@ -119,5 +120,18 @@ class ArtFrameLocalImagesSensor(
             raise ServiceValidationError(str(err)) from err
         except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
             raise HomeAssistantError(f"Deleting the image failed: {err}") from err
+        self.async_write_ha_state()
+        return response
+
+    async def async_download_image(
+        self, image_id: int | None = None, show: bool = True
+    ) -> ServiceResponse:
+        """Handle the download_image action."""
+        try:
+            response = await async_download_image(self._device, image_id, show)
+        except ImageSelectionError as err:
+            raise ServiceValidationError(str(err)) from err
+        except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
+            raise HomeAssistantError(f"Downloading the image failed: {err}") from err
         self.async_write_ha_state()
         return response

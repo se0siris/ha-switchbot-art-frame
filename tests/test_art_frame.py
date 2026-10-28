@@ -6,6 +6,7 @@ from custom_components.switchbot_art_frame.art_frame import (
     ArtFrameError,
     ImageSelectionError,
     async_delete_image,
+    async_download_image,
     resolve_image_id,
 )
 
@@ -60,3 +61,54 @@ async def test_delete_refused(frame, art_frame_device) -> None:
     with pytest.raises(ArtFrameError):
         await async_delete_image(art_frame_device, 0x10)
     assert 0x10 in frame.image_ids
+
+
+async def test_download_sequence(frame, art_frame_device) -> None:
+    """Same commands, in the same order, as the app's Sync."""
+    frame.image_ids = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15]
+    frame.current = 0x15
+    result = await async_download_image(art_frame_device, 0x1A)
+    assert result["image_id"] == 0x1A
+    assert result["image_ids"][-1] == 0x1A
+    assert result["current_image_id"] == 0x1A
+    assert result["progress"] == [100, 0, 25, 50, 75]
+    sent = [k for k in frame.sent if k != "5702"]
+    assert sent[:2] == ["570F7A00", "570F7A01011A"]
+    assert set(sent[2:-1]) == {"570F7B00"}
+    assert sent[-1] == "570F7A021A"
+
+
+async def test_download_picks_free_id_and_can_skip_show(
+    frame, art_frame_device
+) -> None:
+    before = frame.image_ids[:9]
+    frame.image_ids = list(before)
+    result = await async_download_image(art_frame_device, show=False)
+    new_id = result["image_id"]
+    assert new_id not in before and 1 <= new_id <= 255
+    assert frame.current == 0x19
+    assert not any(k.startswith("570F7A02") for k in frame.sent)
+
+
+async def test_download_frame_full(frame, art_frame_device) -> None:
+    with pytest.raises(ImageSelectionError, match="already holds"):
+        await async_download_image(art_frame_device)
+    assert "570F7A00" not in frame.sent
+
+
+async def test_download_id_in_use(frame, art_frame_device) -> None:
+    frame.image_ids.pop()
+    with pytest.raises(ImageSelectionError, match="already on the frame"):
+        await async_download_image(art_frame_device, 0x10)
+
+
+async def test_download_never_finishes(frame, art_frame_device) -> None:
+    frame.image_ids.pop()
+    frame.download_steps = None
+    with pytest.raises(ArtFrameError, match="did not finish"):
+        await async_download_image(art_frame_device, 0x1A)
+
+
+@pytest.mark.parametrize(("target", "expected"), [("oldest", 0x10), ("newest", 0x19)])
+def test_resolve_oldest_newest(target, expected) -> None:
+    assert resolve_image_id(target, [0x10, 0x16, 0x19], 0x19) == expected

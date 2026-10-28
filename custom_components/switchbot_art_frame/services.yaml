@@ -6,11 +6,32 @@ delete_image:
   fields:
     image:
       required: true
-      example: last
+      example: oldest
       selector:
         select:
           custom_value: true
           options:
+            - oldest
+            - newest
+            - current
             - first
             - last
-            - current
+
+download_image:
+  target:
+    entity:
+      integration: switchbot_art_frame
+      domain: sensor
+  fields:
+    image_id:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    show:
+      required: false
+      default: true
+      selector:
+        boolean:

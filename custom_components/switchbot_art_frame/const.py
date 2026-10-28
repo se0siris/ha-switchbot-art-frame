@@ -18,10 +18,34 @@ MAX_LOCAL_IMAGES: Final = 10
 # over BLE; sent encrypted like every other Art Frame command.
 COMMAND_DELETE_IMAGE: Final = "570F7A0102{:02X}"
 
-SERVICE_DELETE_IMAGE: Final = "delete_image"
-ATTR_IMAGE: Final = "image"
+# Captured from the app syncing an image to the frame. The frame fetches the
+# image itself over Wi-Fi from SwitchBot's cloud; Bluetooth only starts it.
+COMMAND_DOWNLOAD_PREPARE: Final = "570F7A00"  # sent by the app first; purpose unknown
+COMMAND_DOWNLOAD_IMAGE: Final = "570F7A0101{:02X}"  # download, store under this ID
+COMMAND_DOWNLOAD_STATUS: Final = "570F7B00"  # progress; polled once a second
 
+# Fields of the COMMAND_DOWNLOAD_STATUS reply (after the result byte).
+STATUS_STATE: Final = 2  # 0 idle, 1 downloading, 2 finished
+STATUS_COUNT: Final = 3
+STATUS_IDS: Final = slice(4, 14)
+STATUS_PERCENT: Final = 14
+
+SERVICE_DELETE_IMAGE: Final = "delete_image"
+SERVICE_DOWNLOAD_IMAGE: Final = "download_image"
+ATTR_IMAGE: Final = "image"
+ATTR_IMAGE_ID: Final = "image_id"
+ATTR_SHOW: Final = "show"
+
+# The frame lists images oldest first, so first == oldest and last == newest.
 IMAGE_FIRST: Final = "first"
 IMAGE_LAST: Final = "last"
+IMAGE_OLDEST: Final = "oldest"
+IMAGE_NEWEST: Final = "newest"
 IMAGE_CURRENT: Final = "current"
-IMAGE_KEYWORDS: Final = (IMAGE_FIRST, IMAGE_LAST, IMAGE_CURRENT)
+IMAGE_KEYWORDS: Final = (
+    IMAGE_OLDEST,
+    IMAGE_NEWEST,
+    IMAGE_CURRENT,
+    IMAGE_FIRST,
+    IMAGE_LAST,
+)

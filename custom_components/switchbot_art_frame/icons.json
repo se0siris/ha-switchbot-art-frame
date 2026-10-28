@@ -9,6 +9,9 @@
   "services": {
     "delete_image": {
       "service": "mdi:image-remove"
+    },
+    "download_image": {
+      "service": "mdi:image-sync"
     }
   }
 }

@@ -6,11 +6,31 @@ moved into PySwitchbot later.
 
 from __future__ import annotations
 
+import asyncio
+import random
+import time
 from typing import TYPE_CHECKING, Any
 
 from switchbot.devices.art_frame import COMMAND_SET_IMAGE
 
-from .const import COMMAND_DELETE_IMAGE, IMAGE_CURRENT, IMAGE_FIRST, IMAGE_LAST
+from .const import (
+    COMMAND_DELETE_IMAGE,
+    COMMAND_DOWNLOAD_IMAGE,
+    COMMAND_DOWNLOAD_PREPARE,
+    COMMAND_DOWNLOAD_STATUS,
+    IMAGE_CURRENT,
+    IMAGE_FIRST,
+    IMAGE_LAST,
+    IMAGE_NEWEST,
+    IMAGE_OLDEST,
+    MAX_LOCAL_IMAGES,
+    STATUS_IDS,
+    STATUS_PERCENT,
+    STATUS_STATE,
+)
+
+POLL_INTERVAL = 1.0  # seconds between progress polls, as the app does
+DOWNLOAD_TIMEOUT = 120.0  # the app's download took about 25 s
 
 if TYPE_CHECKING:
     from switchbot import SwitchbotArtFrame
@@ -30,9 +50,9 @@ def resolve_image_id(
     """Turn an image ID or keyword into an ID that is on the frame."""
     if not image_ids:
         raise ImageSelectionError("The frame has no locally stored images")
-    if target == IMAGE_FIRST:
+    if target in (IMAGE_FIRST, IMAGE_OLDEST):
         return image_ids[0]
-    if target == IMAGE_LAST:
+    if target in (IMAGE_LAST, IMAGE_NEWEST):
         return image_ids[-1]
     if target == IMAGE_CURRENT:
         if current not in image_ids:
@@ -98,4 +118,76 @@ async def async_delete_image(
         "deleted_image_id": image_id,
         "switched_to_image_id": switched_to,
         "remaining_image_ids": remaining,
+    }
+
+
+def _pick_free_id(image_ids: list[int]) -> int:
+    """Choose an unused image ID. 0 is avoided: the frame uses it for 'none'."""
+    return random.choice([i for i in range(1, 256) if i not in image_ids])
+
+
+async def _send(device: SwitchbotArtFrame, key: str, what: str) -> bytes:
+    result = await device._send_command(key)  # noqa: SLF001
+    if not device._check_command_result(result, 0, {1}):  # noqa: SLF001
+        raise ArtFrameError(
+            f"Frame refused to {what} (reply {result.hex() if result else None})"
+        )
+    return result
+
+
+async def async_download_image(
+    device: SwitchbotArtFrame, image_id: int | None = None, show: bool = True
+) -> dict[str, Any]:
+    """Tell the frame to fetch its pending image from SwitchBot's cloud.
+
+    Replays what the app does when you tap Sync: the frame downloads over its
+    own Wi-Fi and stores the image under the ID we give it. The image must
+    already be uploaded to SwitchBot's cloud (for example with
+    switchbot_cloud.upload_art_frame_image).
+    """
+    image_ids, _ = await async_refresh(device)
+    if len(image_ids) >= MAX_LOCAL_IMAGES:
+        raise ImageSelectionError(
+            f"The frame already holds {MAX_LOCAL_IMAGES} images; delete one first"
+        )
+    if image_id is None:
+        image_id = _pick_free_id(image_ids)
+    elif image_id in image_ids:
+        raise ImageSelectionError(f"Image ID {image_id} is already on the frame")
+    elif not 1 <= image_id <= 255:
+        raise ImageSelectionError("Image ID must be between 1 and 255")
+
+    await _send(device, COMMAND_DOWNLOAD_PREPARE, "prepare for a download")
+    reply = await _send(
+        device, COMMAND_DOWNLOAD_IMAGE.format(image_id), "start the download"
+    )
+
+    progress: list[int] = []
+    status = b""
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
+    while True:
+        await asyncio.sleep(POLL_INTERVAL)
+        status = (await _send(device, COMMAND_DOWNLOAD_STATUS, "report progress"))[1:]
+        if len(status) <= STATUS_PERCENT:
+            raise ArtFrameError(f"Unexpected progress reply {status.hex()}")
+        state = status[STATUS_STATE]
+        if state == 2 and image_id in status[STATUS_IDS]:
+            break
+        if not progress or progress[-1] != status[STATUS_PERCENT]:
+            progress.append(status[STATUS_PERCENT])
+        if state not in (1, 2) or time.monotonic() > deadline:
+            raise ArtFrameError(
+                f"Download did not finish (state {state}, last reply "
+                f"{status.hex()}, start reply {reply.hex()})"
+            )
+
+    if show:
+        await _send(device, COMMAND_SET_IMAGE.format(f"{image_id:02X}"), "show it")
+
+    remaining, current = await async_refresh(device)
+    return {
+        "image_id": image_id,
+        "image_ids": remaining,
+        "current_image_id": current,
+        "progress": progress,
     }

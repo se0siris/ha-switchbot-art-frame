@@ -8,6 +8,9 @@ integration:
   with `image_ids`, `current_image_id` and `free_slots` attributes.
 - **`switchbot_art_frame.delete_image`** action: deletes one stored image over
   Bluetooth.
+- **`switchbot_art_frame.download_image`** action (experimental): tells the
+  frame to fetch the image most recently uploaded to SwitchBot's cloud, the
+  same as tapping Sync in the app. No hub or phone needed.
 
 It holds no keys or connections of its own. It uses the core integration's
 connected device, so commands are encrypted with the key that integration
@@ -29,10 +32,10 @@ The sensor appears on the existing Art Frame device page.
 
 Target the Local images sensor. `image` is one of:
 
-- an image ID from the sensor's `image_ids` attribute (for example `187`),
+- an image ID from the sensor's `image_ids` attribute (for example `25`),
 - `current`: the image on display,
-- `first` or `last`: by the order the frame lists its images in. How that order
-  relates to upload time hasn't been checked yet.
+- `oldest` or `newest`: the frame lists its images oldest first. (`first` and
+  `last` mean the same.) The SwitchBot app shows them the other way round.
 
 If the image being deleted is the one on display, the frame switches to the
 next image first, so it is never left showing a deleted picture.
@@ -63,9 +66,24 @@ sequence:
         target:
           entity_id: sensor.art_frame_eeff_local_images
         data:
-          image: first
+          image: oldest
   # ...then your existing switchbot_cloud.upload_art_frame_image step
 ```
+
+## download_image (experimental)
+
+Uploading with `switchbot_cloud.upload_art_frame_image` only puts the image in
+SwitchBot's cloud; without a SwitchBot hub, the frame doesn't find out about it
+until the app syncs. This action does the sync: it sends the frame the commands
+the app sends, and the frame downloads the image over its own Wi-Fi.
+
+Optional fields: `image_id` (1-255, default: an unused one) and `show`
+(default `true`). It waits for the download to finish (the app's took about
+25 s), and returns `image_id`, `image_ids`, `current_image_id` and the
+`progress` percentages it saw. It fails if the frame already holds 10 images.
+
+Still to be confirmed: that the frame accepts an ID chosen by HA rather than the
+app, and how long after a cloud upload the image is ready to fetch.
 
 ## How it works
 
@@ -74,6 +92,9 @@ Bluetooth HCI snoop log and decrypted with the frame's key:
 
 ```
 570F7A0102{image_id}     delete image   (reply: 01 <image_id> 1E)
+570F7A00                 sent before a download (purpose unknown)
+570F7A0101{image_id}     download pending cloud image, store as image_id
+570F7B00                 download progress (state, image list, percent)
 570F7A02{image_id}       show image     (already in PySwitchbot)
 5702                     status         (already in PySwitchbot)
 ```

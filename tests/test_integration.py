@@ -163,3 +163,35 @@ async def test_reloads_when_core_unloads(
     core_entry.mock_state(hass, ConfigEntryState.NOT_LOADED)
     await hass.async_block_till_done()
     assert setup_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_download_action(hass: HomeAssistant, setup_entry, frame) -> None:
+    frame.image_ids.pop(0)
+    response = await hass.services.async_call(
+        DOMAIN,
+        "download_image",
+        {"entity_id": ENTITY_ID, "image_id": "26"},
+        blocking=True,
+        return_response=True,
+    )
+    assert response[ENTITY_ID]["image_id"] == 26
+    state = hass.states.get(ENTITY_ID)
+    assert state.state == "10"
+    assert state.attributes["current_image_id"] == 26
+
+
+async def test_download_action_frame_full(hass: HomeAssistant, setup_entry) -> None:
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "download_image", {"entity_id": ENTITY_ID}, blocking=True
+        )
+
+
+async def test_delete_oldest(hass: HomeAssistant, setup_entry, frame) -> None:
+    await hass.services.async_call(
+        DOMAIN,
+        "delete_image",
+        {"entity_id": ENTITY_ID, "image": "oldest"},
+        blocking=True,
+    )
+    assert 0x10 not in frame.image_ids

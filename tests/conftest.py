@@ -30,6 +30,17 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     return
 
 
+@pytest.fixture(autouse=True)
+def fast_polling(monkeypatch):
+    """Don't wait a real second between download progress polls."""
+    monkeypatch.setattr(
+        "custom_components.switchbot_art_frame.art_frame.POLL_INTERVAL", 0
+    )
+    monkeypatch.setattr(
+        "custom_components.switchbot_art_frame.art_frame.DOWNLOAD_TIMEOUT", 0.2
+    )
+
+
 @dataclass
 class FrameSimulator:
     """Answers decrypted commands the way an Art Frame does."""
@@ -39,6 +50,30 @@ class FrameSimulator:
     battery: int = 42
     sent: list[str] = field(default_factory=list)
     refuse: set[str] = field(default_factory=set)
+    # Download: progress readings returned by successive status polls before
+    # the download finishes; None means the download never finishes.
+    download_steps: list[int] | None = field(
+        default_factory=lambda: [100, 0, 25, 50, 75]
+    )
+    _downloading: int | None = None
+    _steps_left: list[int] = field(default_factory=list)
+
+    def _download_status(self) -> bytes:
+        ids = self.image_ids
+        if self._downloading is None:
+            state, pct, code = 0, 100, 0x1E
+        elif self._steps_left:
+            state, pct, code = 1, self._steps_left.pop(0), 0x0A
+        elif self.download_steps is None:
+            state, pct, code = 1, 0, 0x0A
+        else:
+            ids.append(self._downloading)
+            self._downloading = None
+            state, pct, code = 2, 100, 0x0F
+        slots = bytes(ids).ljust(10, b"\x00")
+        return (
+            b"\x01" + bytes([0x35, 0x31, state, len(ids)]) + slots + bytes([pct, code])
+        )
 
     async def send_command(self, key: str, retry: int | None = None) -> bytes:
         """Stand-in for SwitchbotEncryptedDevice._send_command (post-decryption)."""
@@ -59,6 +94,14 @@ class FrameSimulator:
                 if self.current == image_id:
                     self.current = 0
             return b"\x01" + bytes([image_id, 0x1E])
+        if key == "570F7A00":  # sent before a download
+            return b"\x01\x1e"
+        if key.startswith("570F7A0101"):  # download
+            self._downloading = int(key[10:12], 16)
+            self._steps_left = list(self.download_steps or [])
+            return b"\x01" + bytes([self._downloading, 0x1E])
+        if key == "570F7B00":  # download progress
+            return self._download_status()
         if key.startswith("570F7A02"):  # show image
             image_id = int(key[8:10], 16)
             if image_id in self.image_ids:

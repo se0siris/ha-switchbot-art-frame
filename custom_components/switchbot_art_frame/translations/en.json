@@ -33,7 +33,21 @@
       "fields": {
         "image": {
           "name": "Image",
-          "description": "An image ID from the sensor's Image IDs attribute, or first, last or current (first and last follow the order the frame lists them in)."
+          "description": "An image ID from the sensor's Image IDs attribute, or oldest, newest or current. (first and last are the same as oldest and newest.)"
+        }
+      }
+    },
+    "download_image": {
+      "name": "Download image",
+      "description": "Tells the frame to fetch the image most recently uploaded to SwitchBot's cloud for it (for example with SwitchBot Cloud's Upload AI Art Frame image) and store it locally. The frame downloads over its own Wi-Fi; this replaces tapping Sync in the app.",
+      "fields": {
+        "image_id": {
+          "name": "Image ID",
+          "description": "ID to store the image under. Leave empty to pick an unused one."
+        },
+        "show": {
+          "name": "Show",
+          "description": "Display the image once it has downloaded."
         }
       }
     }
