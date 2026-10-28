@@ -8,11 +8,12 @@ integration:
   with `image_ids`, `current_image_id` and `free_slots` attributes.
 - **`switchbot_art_frame.delete_image`** action: deletes one stored image over
   Bluetooth.
-- **`switchbot_art_frame.show_image_from_url`** action: puts a new image on
-  the frame from a web address without the SwitchBot app, a hub or a phone.
+- **`switchbot_art_frame.show_image`** action: puts a new image on the
+  frame (from a web address, a file on the HA machine, or image data) without
+  the SwitchBot app, a hub or a phone.
   Needs your SwitchBot account (see below).
 - **`switchbot_art_frame.download_image`** action: tells the frame to fetch an
-  image from SwitchBot's cloud by its ID (used by `show_image_from_url`).
+  image from SwitchBot's cloud by its ID (used by `show_image`).
 - **`switchbot_art_frame.upload_image`** action (experimental): uploads an
   image to SwitchBot's cloud for the frame and returns SwitchBot's reply.
 
@@ -34,7 +35,7 @@ The sensor appears on the existing Art Frame device page.
 
 ### SwitchBot account (optional)
 
-`show_image_from_url`, and keeping SwitchBot's cloud album in step when you
+`show_image`, and keeping SwitchBot's cloud album in step when you
 delete images, need your SwitchBot account email and password. Add them when
 setting up, or later with **Reconfigure** on the integration's entry. They're
 stored in Home Assistant's config like other integrations' credentials.
@@ -66,22 +67,29 @@ in it means nothing was deleted.
 
 `homeassistant.update_entity` on the sensor re-reads the frame's status.
 
-`show_image_from_url` makes room automatically, so you rarely need to call
+`show_image` makes room automatically, so you rarely need to call
 `delete_image` yourself.
 
-## show_image_from_url
+## show_image
 
-Target the Local images sensor and give `image_url` (SwitchBot's servers
-fetch it, so it must be reachable from the internet). It:
+Target the Local images sensor and give exactly one of:
+
+- `image_url`: a web address SwitchBot's servers can reach;
+- `image_path`: a PNG or JPEG on the HA machine, in a folder HA may read
+  (such as `/config/www` or `/media`);
+- `image_data`: the image itself, base64-encoded (or a `data:` URI).
+
+Files and data are sent to SwitchBot as `imageBase64`, so no public URL is
+needed. It:
 
 1. removes cloud album entries for images no longer on the frame (left over
    from deletes made outside the app), so they don't count against the
    cloud's 10-image limit;
 2. if the frame is full, deletes its oldest image, on the frame and in the
    cloud (set `make_room: false` to fail instead);
-3. uploads the image through SwitchBot Cloud's API (the same call as
-   `switchbot_cloud.upload_art_frame_image`; needs the SwitchBot Cloud
-   integration);
+3. uploads the image through SwitchBot Cloud's API (as
+   `switchbot_cloud.upload_art_frame_image` does for URLs; needs the
+   SwitchBot Cloud integration);
 4. finds the ID SwitchBot gave it in the frame's cloud album;
 5. tells the frame over Bluetooth to download that ID (it fetches the image
    over its own Wi-Fi, about 25 s) and shows it.
@@ -90,11 +98,11 @@ It returns `image_id`, `image_ids`, `current_image_id`, `progress`,
 `deleted_image_id` and `removed_cloud_leftovers`.
 
 ```yaml
-action: switchbot_art_frame.show_image_from_url
+action: switchbot_art_frame.show_image
 target:
   entity_id: sensor.art_frame_eeff_local_images
 data:
-  image_url: https://images.metmuseum.org/CRDImages/as/original/DP121552.jpg
+  image_path: /config/www/frame/today.png
 ```
 
 ## download_image
@@ -110,7 +118,7 @@ the SwitchBot Cloud integration, and returns SwitchBot's reply as
 `cloud_response`. It makes the same call as
 `switchbot_cloud.upload_art_frame_image`, which discards the reply. The frame
 doesn't fetch the image until it's told to with `download_image`;
-`show_image_from_url` does the whole thing.
+`show_image` does the whole thing.
 
 ## How it works
 

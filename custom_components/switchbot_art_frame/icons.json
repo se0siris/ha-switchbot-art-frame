@@ -16,7 +16,7 @@
     "upload_image": {
       "service": "mdi:image-plus"
     },
-    "show_image_from_url": {
+    "show_image": {
       "service": "mdi:image-move"
     }
   }

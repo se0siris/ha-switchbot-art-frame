@@ -47,16 +47,26 @@ upload_image:
       selector:
         text:
 
-show_image_from_url:
+show_image:
   target:
     entity:
       integration: switchbot_art_frame
       domain: sensor
   fields:
     image_url:
-      required: true
+      required: false
       selector:
         text:
+    image_path:
+      required: false
+      example: /config/www/frame/today.png
+      selector:
+        text:
+    image_data:
+      required: false
+      selector:
+        text:
+          multiline: true
     make_room:
       required: false
       default: true

@@ -1,4 +1,4 @@
-"""Tests for show_image_from_url's steps, with a fake cloud and simulated frame."""
+"""Tests for show_image's steps, with a fake cloud and simulated frame."""
 
 import pytest
 
@@ -6,7 +6,7 @@ from custom_components.switchbot_art_frame.art_frame import (
     ArtFrameError,
     ImageSelectionError,
 )
-from custom_components.switchbot_art_frame.workflow import async_show_image_from_url
+from custom_components.switchbot_art_frame.workflow import async_show_image
 
 
 class FakeAccount:
@@ -61,10 +61,10 @@ async def test_full_flow_with_room(frame, art_frame_device) -> None:
         uploads.append(url)
         account.add_upload(0x1A)
 
-    result = await async_show_image_from_url(
-        art_frame_device, account, upload, "https://example.com/a.jpg"
+    result = await async_show_image(
+        art_frame_device, account, upload, {"imageUrl": "https://example.com/a.jpg"}
     )
-    assert uploads == ["https://example.com/a.jpg"]
+    assert uploads == [{"imageUrl": "https://example.com/a.jpg"}]
     assert result["image_id"] == 0x1A
     assert result["current_image_id"] == 0x1A
     assert result["deleted_image_id"] is None
@@ -80,7 +80,7 @@ async def test_full_frame_deletes_oldest_on_frame_and_cloud(
     async def upload(url):
         account.add_upload(0x1A)
 
-    result = await async_show_image_from_url(
+    result = await async_show_image(
         art_frame_device, account, upload, "https://example.com/a.jpg"
     )
     assert result["deleted_image_id"] == 0x10
@@ -96,7 +96,7 @@ async def test_full_frame_without_make_room(frame, art_frame_device) -> None:
         raise AssertionError("should not upload")
 
     with pytest.raises(ImageSelectionError):
-        await async_show_image_from_url(
+        await async_show_image(
             art_frame_device, account, upload, "https://x/a.jpg", make_room=False
         )
 
@@ -111,7 +111,7 @@ async def test_cloud_leftovers_removed_pending_kept(frame, art_frame_device) -> 
     async def upload(url):
         account.add_upload(0x1A)
 
-    result = await async_show_image_from_url(
+    result = await async_show_image(
         art_frame_device, account, upload, "https://x/a.jpg"
     )
     assert result["removed_cloud_leftovers"] == [0x1F]
@@ -126,9 +126,7 @@ async def test_upload_never_appears(frame, art_frame_device) -> None:
         pass  # accepted, but nothing appears
 
     with pytest.raises(ArtFrameError, match="never appeared"):
-        await async_show_image_from_url(
-            art_frame_device, account, upload, "https://x/a.jpg"
-        )
+        await async_show_image(art_frame_device, account, upload, "https://x/a.jpg")
 
 
 async def test_waits_for_upload_to_appear(frame, art_frame_device) -> None:
@@ -139,7 +137,7 @@ async def test_waits_for_upload_to_appear(frame, art_frame_device) -> None:
     async def upload(url):
         account.add_upload(0x1B)
 
-    result = await async_show_image_from_url(
+    result = await async_show_image(
         art_frame_device, account, upload, "https://x/a.jpg"
     )
     assert result["image_id"] == 0x1B

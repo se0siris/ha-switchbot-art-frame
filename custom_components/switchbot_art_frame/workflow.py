@@ -48,14 +48,17 @@ async def async_remove_cloud_leftovers(
     return leftovers
 
 
-async def async_show_image_from_url(
+async def async_show_image(
     device: SwitchbotArtFrame,
     account: SwitchBotAccount,
-    upload: Callable[[str], Awaitable[Any]],
-    image_url: str,
+    upload: Callable[[Any], Awaitable[Any]],
+    image: Any,
     make_room: bool = True,
 ) -> dict[str, Any]:
-    """Upload an image and put it on the frame. See the module docstring."""
+    """Upload an image and put it on the frame. See the module docstring.
+
+    `image` is passed unchanged to `upload` (the Cloud API parameters).
+    """
     frame_ids, _ = await async_refresh(device)
     removed = await async_remove_cloud_leftovers(account, frame_ids)
 
@@ -70,7 +73,7 @@ async def async_show_image_from_url(
         await account.async_delete_images([deleted])
 
     before = {img.get("id") for img in await account.async_list_images()}
-    await upload(image_url)
+    await upload(image)
 
     new: dict[str, Any] | None = None
     deadline = time.monotonic() + LIST_TIMEOUT

@@ -10,7 +10,7 @@
       },
       "account": {
         "title": "SwitchBot account (optional)",
-        "description": "Needed only for Show image from URL, which puts new images on the frame without the SwitchBot app, and to keep SwitchBot's cloud album in step when images are deleted. Uses SwitchBot's private app API (as PySwitchbot does to get encryption keys); it isn't officially supported and could change. Google or Apple sign-in accounts won't work. Leave blank to skip.",
+        "description": "Needed only for Show image, which puts new images on the frame without the SwitchBot app, and to keep SwitchBot's cloud album in step when images are deleted. Uses SwitchBot's private app API (as PySwitchbot does to get encryption keys); it isn't officially supported and could change. Google or Apple sign-in accounts won't work. Leave blank to skip.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -18,7 +18,7 @@
       },
       "reconfigure": {
         "title": "SwitchBot account",
-        "description": "Add, change or remove (leave both blank) the SwitchBot account used for Show image from URL and for deleting images from SwitchBot's cloud album.",
+        "description": "Add, change or remove (leave both blank) the SwitchBot account used for Show image and for deleting images from SwitchBot's cloud album.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -89,13 +89,21 @@
         }
       }
     },
-    "show_image_from_url": {
-      "name": "Show image from URL",
-      "description": "Uploads an image to SwitchBot's cloud and has the frame fetch and display it, without the SwitchBot app. Deletes the oldest image first if the frame is full. Needs a SwitchBot account added to this integration.",
+    "show_image": {
+      "name": "Show image",
+      "description": "Uploads an image to SwitchBot's cloud and has the frame fetch and display it, without the SwitchBot app. Give exactly one of an image URL, a file path or image data. Deletes the oldest image first if the frame is full. Needs a SwitchBot account added to this integration.",
       "fields": {
         "image_url": {
           "name": "Image URL",
           "description": "Web address of the image. SwitchBot's servers fetch it, so it must be reachable from the internet."
+        },
+        "image_path": {
+          "name": "Image file",
+          "description": "Path to a PNG or JPEG file on the Home Assistant machine (in an allowed folder, such as /config/www or /media)."
+        },
+        "image_data": {
+          "name": "Image data",
+          "description": "The image itself, base64-encoded, optionally as a data: URI."
         },
         "make_room": {
           "name": "Make room",

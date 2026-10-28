@@ -312,7 +312,7 @@ async def test_show_image_needs_account(hass: HomeAssistant, setup_entry) -> Non
     with pytest.raises(ServiceValidationError, match="SwitchBot account"):
         await hass.services.async_call(
             DOMAIN,
-            "show_image_from_url",
+            "show_image",
             {"entity_id": ENTITY_ID, "image_url": "https://example.com/a.jpg"},
             blocking=True,
         )
@@ -359,3 +359,141 @@ async def test_delete_cloud_failure_still_reports_frame_delete(
     assert 0x10 not in frame.image_ids
     assert response[ENTITY_ID]["cloud_deleted"] is False
     assert "servers down" in response[ENTITY_ID]["cloud_error"]
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+@pytest.fixture
+def cloud_flow(hass: HomeAssistant, setup_entry, frame):
+    """Fake account + Cloud API upload; returns the list of upload parameters."""
+    import base64  # noqa: F401
+
+    uploads = []
+    entity = _sensor_entity(hass)
+
+    class Account:
+        records = [{"id": 1, "status": 1, "imageIndex": i} for i in frame.image_ids]
+
+        async def async_list_images(self):
+            return sorted(self.records, key=lambda r: r["id"], reverse=True)
+
+        async def async_delete_images(self, ids):
+            self.records = [r for r in self.records if r["imageIndex"] not in ids]
+
+    account = Account()
+
+    async def upload(parameter):
+        uploads.append(parameter)
+        account.records.append({"id": 99, "status": 0, "imageIndex": 0x77})
+
+    entity._account = account  # noqa: SLF001
+    entity._async_cloud_upload = upload  # noqa: SLF001
+    frame.image_ids.pop()  # leave room
+    return uploads
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        (
+            {"image_url": "https://example.com/a.png"},
+            {"imageUrl": "https://example.com/a.png"},
+        ),
+        (
+            {"image_data": "data:image/png;base64,AAAA"},
+            {"imageBase64": "data:image/png;base64,AAAA"},
+        ),
+        (
+            {"image_data": __import__("base64").b64encode(PNG).decode()},
+            {
+                "imageBase64": "data:image/png;base64,"
+                + __import__("base64").b64encode(PNG).decode()
+            },
+        ),
+    ],
+)
+async def test_show_image_sources(
+    hass: HomeAssistant, cloud_flow, frame, data, expected
+) -> None:
+    response = await hass.services.async_call(
+        DOMAIN,
+        "show_image",
+        {"entity_id": ENTITY_ID, **data},
+        blocking=True,
+        return_response=True,
+    )
+    assert cloud_flow == [expected]
+    assert response[ENTITY_ID]["image_id"] == 0x77
+    assert frame.current == 0x77
+
+
+async def test_show_image_from_file(hass: HomeAssistant, cloud_flow, tmp_path) -> None:
+    import base64
+
+    image = tmp_path / "poster.png"
+    image.write_bytes(PNG)
+    hass.config.allowlist_external_dirs = {str(tmp_path)}
+    await hass.services.async_call(
+        DOMAIN,
+        "show_image",
+        {"entity_id": ENTITY_ID, "image_path": str(image)},
+        blocking=True,
+        return_response=True,
+    )
+    assert cloud_flow == [
+        {"imageBase64": "data:image/png;base64," + base64.b64encode(PNG).decode()}
+    ]
+
+
+async def test_show_image_file_not_allowed(
+    hass: HomeAssistant, cloud_flow, tmp_path
+) -> None:
+    image = tmp_path / "poster.png"
+    image.write_bytes(PNG)
+    hass.config.allowlist_external_dirs = set()
+    with pytest.raises(ServiceValidationError, match="not in a folder"):
+        await hass.services.async_call(
+            DOMAIN,
+            "show_image",
+            {"entity_id": ENTITY_ID, "image_path": str(image)},
+            blocking=True,
+        )
+    assert cloud_flow == []
+
+
+@pytest.mark.parametrize(
+    ("data", "match"),
+    [
+        ({}, "Give one of"),
+        ({"image_data": "not base64!!"}, "not valid base64"),
+        (
+            {"image_data": __import__("base64").b64encode(b"GIF89a").decode()},
+            "PNG or JPEG",
+        ),
+    ],
+)
+async def test_show_image_bad_input(
+    hass: HomeAssistant, cloud_flow, data, match
+) -> None:
+    with pytest.raises(ServiceValidationError, match=match):
+        await hass.services.async_call(
+            DOMAIN, "show_image", {"entity_id": ENTITY_ID, **data}, blocking=True
+        )
+    assert cloud_flow == []
+
+
+async def test_show_image_two_sources_rejected(hass: HomeAssistant, cloud_flow) -> None:
+    import probatio
+
+    with pytest.raises(probatio.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            "show_image",
+            {
+                "entity_id": ENTITY_ID,
+                "image_url": "https://example.com/a.png",
+                "image_data": "AAAA",
+            },
+            blocking=True,
+        )

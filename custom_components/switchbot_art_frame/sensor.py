@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Mapping
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bleak.exc import BleakError
@@ -27,7 +30,7 @@ from .art_frame import (
     async_refresh,
 )
 from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES, SWITCHBOT_CLOUD_DOMAIN
-from .workflow import async_show_image_from_url
+from .workflow import async_show_image
 
 FRAME_ERRORS = (ArtFrameError, SwitchbotOperationError, BleakError)
 
@@ -158,10 +161,15 @@ class ArtFrameLocalImagesSensor(
         switchbot_cloud.upload_art_frame_image, through that integration's
         connection, but returns the API's reply instead of discarding it.
         """
-        return {"cloud_response": await self._async_cloud_upload(image_url)}
+        return {
+            "cloud_response": await self._async_cloud_upload({"imageUrl": image_url})
+        }
 
-    async def _async_cloud_upload(self, image_url: str) -> Any:
-        """Upload via the public Cloud API, through SwitchBot Cloud's connection."""
+    async def _async_cloud_upload(self, parameter: dict[str, str]) -> Any:
+        """Upload via the public Cloud API, through SwitchBot Cloud's connection.
+
+        `parameter` is {"imageUrl": ...} or {"imageBase64": data URI}.
+        """
         cloud = next(
             (
                 entry
@@ -181,7 +189,7 @@ class ArtFrameLocalImagesSensor(
                 json={
                     "commandType": "command",
                     "command": "uploadImage",
-                    "parameter": {"imageUrl": image_url},
+                    "parameter": parameter,
                 },
             )
         except Exception as err:
@@ -202,22 +210,59 @@ class ArtFrameLocalImagesSensor(
         self.async_write_ha_state()
         return response
 
-    async def async_show_image_from_url(
-        self, image_url: str, make_room: bool = True
+    async def _async_image_parameter(
+        self,
+        image_url: str | None,
+        image_path: str | None,
+        image_data: str | None,
+    ) -> dict[str, str]:
+        """Turn the action's image source into Cloud API upload parameters."""
+        if image_url:
+            return {"imageUrl": image_url}
+        if image_path:
+            if not self.hass.config.is_allowed_path(image_path):
+                raise ServiceValidationError(
+                    f"{image_path} is not in a folder Home Assistant may read "
+                    "(see allowlist_external_dirs)"
+                )
+            try:
+                raw = await self.hass.async_add_executor_job(
+                    Path(image_path).read_bytes
+                )
+            except OSError as err:
+                raise ServiceValidationError(f"Can't read {image_path}: {err}") from err
+            return {"imageBase64": to_data_uri(raw)}
+        if image_data:
+            if image_data.startswith("data:"):
+                return {"imageBase64": image_data}
+            try:
+                raw = base64.b64decode(image_data, validate=True)
+            except binascii.Error as err:
+                raise ServiceValidationError("image_data is not valid base64") from err
+            return {"imageBase64": to_data_uri(raw)}
+        raise ServiceValidationError("Give one of image_url, image_path or image_data")
+
+    async def async_show_image(
+        self,
+        image_url: str | None = None,
+        image_path: str | None = None,
+        image_data: str | None = None,
+        make_room: bool = True,
     ) -> ServiceResponse:
-        """Handle the show_image_from_url action: the whole upload, no app."""
+        """Handle the show_image action: the whole upload, no app."""
         if self._account is None:
             raise ServiceValidationError(
                 "Add your SwitchBot account to this integration first "
                 "(Settings > Devices & services > SwitchBot Art Frame Tools > "
                 "Reconfigure)"
             )
+        parameter = await self._async_image_parameter(image_url, image_path, image_data)
         try:
-            response = await async_show_image_from_url(
+            response = await async_show_image(
                 self._device,
                 self._account,
                 self._async_cloud_upload,
-                image_url,
+                parameter,
                 make_room,
             )
         except ImageSelectionError as err:
@@ -227,3 +272,14 @@ class ArtFrameLocalImagesSensor(
         finally:
             self.async_write_ha_state()
         return response
+
+
+def to_data_uri(raw: bytes) -> str:
+    """Wrap image bytes as a data URI, detecting PNG or JPEG."""
+    if raw.startswith(b"\x89PNG"):
+        mime = "image/png"
+    elif raw.startswith(b"\xff\xd8"):
+        mime = "image/jpeg"
+    else:
+        raise ServiceValidationError("The image must be a PNG or JPEG")
+    return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
