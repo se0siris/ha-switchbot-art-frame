@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import logging
 from typing import TYPE_CHECKING, Any
 
 from bleak.exc import BleakError
@@ -24,7 +25,9 @@ from .art_frame import (
     async_download_image,
     async_refresh,
 )
-from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES
+from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES, SWITCHBOT_CLOUD_DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from homeassistant.components.switchbot.coordinator import (
@@ -122,6 +125,40 @@ class ArtFrameLocalImagesSensor(
             raise HomeAssistantError(f"Deleting the image failed: {err}") from err
         self.async_write_ha_state()
         return response
+
+    async def async_upload_image(self, image_url: str) -> ServiceResponse:
+        """Handle the upload_image action (experimental).
+
+        Makes the same SwitchBot Cloud API call as
+        switchbot_cloud.upload_art_frame_image, through that integration's
+        connection, but returns the API's reply instead of discarding it.
+        """
+        cloud = next(
+            (
+                entry
+                for entry in self.hass.config_entries.async_loaded_entries(
+                    SWITCHBOT_CLOUD_DOMAIN
+                )
+            ),
+            None,
+        )
+        if cloud is None:
+            raise ServiceValidationError("SwitchBot Cloud integration is not loaded")
+        mac = self.coordinator.ble_device.address.replace(":", "").upper()
+        try:
+            body = await cloud.runtime_data.api._request(  # noqa: SLF001
+                "POST",
+                f"devices/{mac}/commands",
+                json={
+                    "commandType": "command",
+                    "command": "uploadImage",
+                    "parameter": {"imageUrl": image_url},
+                },
+            )
+        except Exception as err:
+            raise HomeAssistantError(f"SwitchBot Cloud upload failed: {err!r}") from err
+        _LOGGER.debug("uploadImage reply: %s", body)
+        return {"cloud_response": body}
 
     async def async_download_image(
         self, image_id: int | None = None, show: bool = True

@@ -35,3 +35,14 @@ download_image:
       default: true
       selector:
         boolean:
+
+upload_image:
+  target:
+    entity:
+      integration: switchbot_art_frame
+      domain: sensor
+  fields:
+    image_url:
+      required: true
+      selector:
+        text:

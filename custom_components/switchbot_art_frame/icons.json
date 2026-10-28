@@ -12,6 +12,9 @@
     },
     "download_image": {
       "service": "mdi:image-sync"
+    },
+    "upload_image": {
+      "service": "mdi:image-plus"
     }
   }
 }

@@ -9,11 +9,13 @@ from homeassistant.helpers import config_validation as cv, service
 from .const import (
     ATTR_IMAGE,
     ATTR_IMAGE_ID,
+    ATTR_IMAGE_URL,
     ATTR_SHOW,
     DOMAIN,
     IMAGE_KEYWORDS,
     SERVICE_DELETE_IMAGE,
     SERVICE_DOWNLOAD_IMAGE,
+    SERVICE_UPLOAD_IMAGE,
 )
 
 IMAGE_ID_SCHEMA = vol.All(vol.Coerce(int), vol.Range(min=0, max=255))
@@ -45,4 +47,13 @@ def async_setup_services(hass: HomeAssistant) -> None:
         },
         func="async_download_image",
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_UPLOAD_IMAGE,
+        entity_domain=SENSOR_DOMAIN,
+        schema={vol.Required(ATTR_IMAGE_URL): cv.url},
+        func="async_upload_image",
+        supports_response=SupportsResponse.ONLY,
     )

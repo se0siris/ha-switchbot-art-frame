@@ -195,3 +195,52 @@ async def test_delete_oldest(hass: HomeAssistant, setup_entry, frame) -> None:
         blocking=True,
     )
     assert 0x10 not in frame.image_ids
+
+
+async def test_upload_action_returns_cloud_reply(
+    hass: HomeAssistant, setup_entry
+) -> None:
+    calls = []
+
+    class FakeApi:
+        async def _request(self, method, path, json=None):
+            calls.append((method, path, json))
+            return {"imageId": 26}
+
+    cloud = MockConfigEntry(domain="switchbot_cloud")
+    cloud.add_to_hass(hass)
+    cloud.mock_state(hass, ConfigEntryState.LOADED)
+    cloud.runtime_data = type("D", (), {"api": FakeApi()})()
+
+    response = await hass.services.async_call(
+        DOMAIN,
+        "upload_image",
+        {"entity_id": ENTITY_ID, "image_url": "https://example.com/a.jpg"},
+        blocking=True,
+        return_response=True,
+    )
+    assert response[ENTITY_ID] == {"cloud_response": {"imageId": 26}}
+    assert calls == [
+        (
+            "POST",
+            "devices/AABBCCDDEEFF/commands",
+            {
+                "commandType": "command",
+                "command": "uploadImage",
+                "parameter": {"imageUrl": "https://example.com/a.jpg"},
+            },
+        )
+    ]
+    # A fake entry: stop HA importing the real integration to unload it.
+    cloud.mock_state(hass, ConfigEntryState.NOT_LOADED)
+
+
+async def test_upload_action_without_cloud(hass: HomeAssistant, setup_entry) -> None:
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN,
+            "upload_image",
+            {"entity_id": ENTITY_ID, "image_url": "https://example.com/a.jpg"},
+            blocking=True,
+            return_response=True,
+        )

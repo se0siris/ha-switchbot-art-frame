@@ -19,9 +19,15 @@
       "local_images": {
         "name": "Local images",
         "state_attributes": {
-          "image_ids": { "name": "Image IDs" },
-          "current_image_id": { "name": "Current image ID" },
-          "free_slots": { "name": "Free slots" }
+          "image_ids": {
+            "name": "Image IDs"
+          },
+          "current_image_id": {
+            "name": "Current image ID"
+          },
+          "free_slots": {
+            "name": "Free slots"
+          }
         }
       }
     }
@@ -48,6 +54,16 @@
         "show": {
           "name": "Show",
           "description": "Display the image once it has downloaded."
+        }
+      }
+    },
+    "upload_image": {
+      "name": "Upload image (experimental)",
+      "description": "Uploads an image from a web address to SwitchBot's cloud for this frame, like SwitchBot Cloud's Upload AI Art Frame image, and returns SwitchBot's reply.",
+      "fields": {
+        "image_url": {
+          "name": "Image URL",
+          "description": "Web address of the image. SwitchBot's servers fetch it, so it must be reachable from the internet."
         }
       }
     }

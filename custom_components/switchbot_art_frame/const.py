@@ -6,6 +6,7 @@ DOMAIN: Final = "switchbot_art_frame"
 
 # Domain and config entry fields of the core SwitchBot Bluetooth integration.
 SWITCHBOT_DOMAIN: Final = "switchbot"
+SWITCHBOT_CLOUD_DOMAIN: Final = "switchbot_cloud"
 SWITCHBOT_SENSOR_TYPE: Final = "sensor_type"
 SWITCHBOT_ART_FRAME: Final = "art_frame"
 
@@ -32,6 +33,8 @@ STATUS_PERCENT: Final = 14
 
 SERVICE_DELETE_IMAGE: Final = "delete_image"
 SERVICE_DOWNLOAD_IMAGE: Final = "download_image"
+SERVICE_UPLOAD_IMAGE: Final = "upload_image"
+ATTR_IMAGE_URL: Final = "image_url"
 ATTR_IMAGE: Final = "image"
 ATTR_IMAGE_ID: Final = "image_id"
 ATTR_SHOW: Final = "show"
