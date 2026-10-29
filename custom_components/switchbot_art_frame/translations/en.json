@@ -10,7 +10,7 @@
       },
       "account": {
         "title": "SwitchBot account (optional)",
-        "description": "Needed only for Show image, which puts new images on the frame without the SwitchBot app, and to keep SwitchBot's cloud album in step when images are deleted. Uses SwitchBot's private app API (as PySwitchbot does to get encryption keys); it isn't officially supported and could change. Google or Apple sign-in accounts won't work. Leave blank to skip.",
+        "description": "Needed only for Show image, which puts new images on the frame without the SwitchBot app, and to keep SwitchBot's cloud album in step when images are deleted. Uses SwitchBot's private app API (as PySwitchbot does to get encryption keys); it isn't officially supported and could change. Google or Apple sign-in accounts won't work. The password isn't stored: Home Assistant keeps a session token instead, and asks for the password again if SwitchBot ends the session. Leave blank to skip.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -23,12 +23,20 @@
           "email": "Email",
           "password": "Password"
         }
+      },
+      "reauth_confirm": {
+        "title": "Log in to SwitchBot again",
+        "description": "SwitchBot ended the session for {email}. Enter the password to start a new one. (To use a different account, use Reconfigure instead.)",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "abort": {
       "no_art_frames": "No Art Frames found. Set the frame up in the SwitchBot Bluetooth integration first.",
       "already_configured": "Every Art Frame is already set up here.",
-      "reconfigure_successful": "Saved."
+      "reconfigure_successful": "Saved.",
+      "reauth_successful": "Logged in again."
     },
     "error": {
       "invalid_auth": "SwitchBot didn't accept that email and password.",

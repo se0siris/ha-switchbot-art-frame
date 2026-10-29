@@ -21,7 +21,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .account import AccountError, SwitchBotAccount
+from .account import AccountError, AuthError, SwitchBotAccount
 from .art_frame import (
     ArtFrameError,
     ImageSelectionError,
@@ -33,6 +33,11 @@ from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES, SWITCHBOT_CLOUD_DO
 from .workflow import async_show_image
 
 FRAME_ERRORS = (ArtFrameError, SwitchbotOperationError, BleakError)
+
+REAUTH_NEEDED = (
+    "SwitchBot ended the session; enter the password again where Home "
+    "Assistant asks (Settings > Devices & services)"
+)
 
 # SwitchBot's upload endpoint returns 413 for large bodies. The limit isn't
 # documented; the error comes from Fastify, whose default is 1 MiB.
@@ -125,6 +130,12 @@ class ArtFrameLocalImagesSensor(
             "free_slots": MAX_LOCAL_IMAGES - total if total is not None else None,
         }
 
+    @callback
+    def _async_auth_failed(self) -> None:
+        """Ask the user to log in again."""
+        if self.platform.config_entry is not None:
+            self.platform.config_entry.async_start_reauth(self.hass)
+
     async def async_update(self) -> None:
         """Read status from the frame (used by homeassistant.update_entity)."""
         try:
@@ -150,6 +161,11 @@ class ArtFrameLocalImagesSensor(
         if self._account is not None:
             try:
                 await self._account.async_delete_images([response["deleted_image_id"]])
+            except AuthError as err:
+                _LOGGER.warning("Image deleted from frame but not cloud: %s", err)
+                self._async_auth_failed()
+                response["cloud_deleted"] = False
+                response["cloud_error"] = REAUTH_NEEDED
             except AccountError as err:
                 _LOGGER.warning("Image deleted from frame but not cloud: %s", err)
                 response["cloud_deleted"] = False
@@ -277,6 +293,11 @@ class ArtFrameLocalImagesSensor(
             )
         except ImageSelectionError as err:
             raise ServiceValidationError(str(err)) from err
+        except AuthError as err:
+            self._async_auth_failed()
+            raise HomeAssistantError(
+                f"Showing the image failed: {REAUTH_NEEDED}"
+            ) from err
         except (*FRAME_ERRORS, AccountError) as err:
             raise HomeAssistantError(f"Showing the image failed: {err}") from err
         finally:

@@ -39,8 +39,16 @@ The sensor appears on the existing Art Frame device page.
 
 `show_image`, and keeping SwitchBot's cloud album in step when you
 delete images, need your SwitchBot account email and password. Add them when
-setting up, or later with **Reconfigure** on the integration's entry. They're
-stored in Home Assistant's config like other integrations' credentials.
+setting up, or later with **Reconfigure** on the integration's entry.
+
+The password isn't stored. Logging in gives a session token, renewed
+automatically (SwitchBot's access tokens last two hours, the refresh token 30
+days), which is stored in Home Assistant's config like other integrations'
+tokens. If SwitchBot ends the session, Home Assistant shows a
+**Re-authenticate** prompt under Settings > Devices & services and asks for the
+password again; until then `show_image` fails and deletes only happen on the
+frame. Updating from 0.5 or earlier swaps a stored password for a token the
+first time the integration starts.
 
 This uses SwitchBot's private app API (the one PySwitchbot already uses to get
 encryption keys), found by reading the app's Art Frame module. It isn't
@@ -155,7 +163,7 @@ doesn't fetch the image until it's told to with `download_image`;
 
 ## How it works
 
-The delete command was captured from the SwitchBot app with an Android
+The commands were captured from the SwitchBot app with an Android
 Bluetooth HCI snoop log and decrypted with the frame's key:
 
 ```

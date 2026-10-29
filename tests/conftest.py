@@ -94,7 +94,7 @@ class FrameSimulator:
                 if self.current == image_id:
                     self.current = 0
             return b"\x01" + bytes([image_id, 0x1E])
-        if key == "570F7A00":  # sent before a download
+        if key == "570F7A00":  # start Wi-Fi, sent before a download
             return b"\x01\x1e"
         if key.startswith("570F7A0101"):  # download
             self._downloading = int(key[10:12], 16)

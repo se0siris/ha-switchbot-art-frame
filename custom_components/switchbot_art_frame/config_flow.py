@@ -3,12 +3,13 @@ optionally a SwitchBot account for uploading images without the app."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import probatio as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, CONF_TOKEN
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     TextSelector,
@@ -31,6 +32,14 @@ ACCOUNT_SCHEMA = vol.Schema(
             TextSelectorConfig(type=TextSelectorType.EMAIL)
         ),
         vol.Optional(CONF_PASSWORD, default=""): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
+    }
+)
+
+REAUTH_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_PASSWORD): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
     }
@@ -80,30 +89,31 @@ class ArtFrameToolsConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
         )
 
-    async def _async_check_account(
+    async def _async_login(
         self, core_id: str, user_input: dict[str, Any]
-    ) -> dict[str, str]:
-        """Return form errors; empty if the account is fine or left blank."""
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        """Log in; return form errors and the entry's account data.
+
+        Both are empty if the account was left blank.
+        """
         email = user_input.get(CONF_EMAIL, "").strip()
         password = user_input.get(CONF_PASSWORD, "")
         if not email and not password:
-            return {}
+            return {}, {}
         if not email or not password:
-            return {"base": "account_incomplete"}
+            return {"base": "account_incomplete"}, {}
         core = self.hass.config_entries.async_get_known_entry(core_id)
         account = SwitchBotAccount(
-            async_get_clientsession(self.hass),
-            email,
-            password,
-            core.data.get("address", ""),
+            async_get_clientsession(self.hass), core.data.get("address", "")
         )
         try:
-            await account.async_login()
+            await account.async_login(email, password)
         except AuthError:
-            return {"base": "invalid_auth"}
+            return {"base": "invalid_auth"}, {}
         except AccountError:
-            return {"base": "frame_not_in_account"}
-        return {}
+            return {"base": "frame_not_in_account"}, {}
+        # The password isn't stored: the refresh token keeps the session going.
+        return {}, {CONF_EMAIL: email, CONF_TOKEN: account.tokens}
 
     async def async_step_account(
         self, user_input: dict[str, Any] | None = None
@@ -112,12 +122,12 @@ class ArtFrameToolsConfigFlow(ConfigFlow, domain=DOMAIN):
         assert self._core_id is not None
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = await self._async_check_account(self._core_id, user_input)
+            errors, account = await self._async_login(self._core_id, user_input)
             if not errors:
                 core = self.hass.config_entries.async_get_known_entry(self._core_id)
                 return self.async_create_entry(
                     title=core.title,
-                    data=_entry_data(self._core_id, user_input),
+                    data={CONF_SWITCHBOT_ENTRY_ID: self._core_id, **account},
                 )
         return self.async_show_form(
             step_id="account",
@@ -135,10 +145,10 @@ class ArtFrameToolsConfigFlow(ConfigFlow, domain=DOMAIN):
         core_id = entry.data[CONF_SWITCHBOT_ENTRY_ID]
         errors: dict[str, str] = {}
         if user_input is not None:
-            errors = await self._async_check_account(core_id, user_input)
+            errors, account = await self._async_login(core_id, user_input)
             if not errors:
                 return self.async_update_reload_and_abort(
-                    entry, data=_entry_data(core_id, user_input)
+                    entry, data={CONF_SWITCHBOT_ENTRY_ID: core_id, **account}
                 )
         return self.async_show_form(
             step_id="reconfigure",
@@ -149,11 +159,29 @@ class ArtFrameToolsConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """SwitchBot no longer accepts the stored session."""
+        return await self.async_step_reauth_confirm()
 
-def _entry_data(core_id: str, user_input: dict[str, Any]) -> dict[str, Any]:
-    data: dict[str, Any] = {CONF_SWITCHBOT_ENTRY_ID: core_id}
-    email = user_input.get(CONF_EMAIL, "").strip()
-    if email and user_input.get(CONF_PASSWORD):
-        data[CONF_EMAIL] = email
-        data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
-    return data
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for the password again."""
+        entry = self._get_reauth_entry()
+        email = entry.data.get(CONF_EMAIL, "")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors, account = await self._async_login(
+                entry.data[CONF_SWITCHBOT_ENTRY_ID],
+                {CONF_EMAIL: email, CONF_PASSWORD: user_input[CONF_PASSWORD]},
+            )
+            if not errors:
+                return self.async_update_reload_and_abort(entry, data_updates=account)
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=REAUTH_SCHEMA,
+            description_placeholders={"email": email},
+            errors=errors,
+        )

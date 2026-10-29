@@ -21,12 +21,12 @@ COMMAND_DELETE_IMAGE: Final = "570F7A0102{:02X}"
 
 # Captured from the app syncing an image to the frame. The frame fetches the
 # image itself over Wi-Fi from SwitchBot's cloud; Bluetooth only starts it.
-COMMAND_DOWNLOAD_PREPARE: Final = "570F7A00"  # sent by the app first; purpose unknown
+COMMAND_START_WIFI: Final = "570F7A00"  # the app: "trigger device to connect"
 COMMAND_DOWNLOAD_IMAGE: Final = "570F7A0101{:02X}"  # download, store under this ID
 COMMAND_DOWNLOAD_STATUS: Final = "570F7B00"  # progress; polled once a second
 
 # Fields of the COMMAND_DOWNLOAD_STATUS reply (after the result byte).
-STATUS_STATE: Final = 2  # 0 idle, 1 downloading, 2 finished
+STATUS_STATE: Final = 2  # 0 idle, 1 downloading, 2 finished, 3 failed
 STATUS_COUNT: Final = 3
 STATUS_IDS: Final = slice(4, 14)
 STATUS_PERCENT: Final = 14

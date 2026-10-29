@@ -9,22 +9,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from switchbot import SwitchbotArtFrame
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
+from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, CONF_TOKEN, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
-from .account import SwitchBotAccount
+from .account import AccountError, AuthError, SwitchBotAccount
 from .const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
 from .services import async_setup_services
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from homeassistant.components.switchbot.coordinator import (
@@ -93,14 +96,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> 
     coordinator = core_entry.runtime_data
     if not isinstance(coordinator.device, SwitchbotArtFrame):
         raise ConfigEntryError(f"'{core_entry.title}' is not an Art Frame")
+    address = coordinator.ble_device.address
+    if CONF_PASSWORD in entry.data:
+        await _async_replace_password(hass, entry, address)
+
     account = None
-    if entry.data.get(CONF_EMAIL) and entry.data.get(CONF_PASSWORD):
-        # Logs in on first use, so setup doesn't depend on SwitchBot's servers.
+    if entry.data.get(CONF_TOKEN):
+
+        @callback
+        def _save_tokens(tokens: dict[str, Any]) -> None:
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, CONF_TOKEN: tokens}
+            )
+
+        # Contacts SwitchBot only on first use, so setup doesn't depend on
+        # SwitchBot's servers.
         account = SwitchBotAccount(
             async_get_clientsession(hass),
-            entry.data[CONF_EMAIL],
-            entry.data[CONF_PASSWORD],
-            coordinator.ble_device.address,
+            address,
+            entry.data[CONF_TOKEN],
+            _save_tokens,
         )
     entry.runtime_data = ArtFrameData(coordinator, account)
 
@@ -117,6 +132,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> 
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_replace_password(
+    hass: HomeAssistant, entry: ArtFrameConfigEntry, address: str
+) -> None:
+    """Swap a password stored by version 0.5 and earlier for tokens."""
+    data = dict(entry.data)
+    account = SwitchBotAccount(async_get_clientsession(hass), address)
+    try:
+        await account.async_login(data[CONF_EMAIL], data[CONF_PASSWORD])
+    except AuthError as err:
+        _LOGGER.warning("Stored SwitchBot login no longer works: %s", err)
+        entry.async_start_reauth(hass)
+    except AccountError as err:
+        # E.g. SwitchBot's servers are down: keep the password and try again
+        # next time, running without the account until then.
+        _LOGGER.warning(
+            "Couldn't swap the stored SwitchBot password for a token: %s", err
+        )
+        return
+    else:
+        data[CONF_TOKEN] = account.tokens
+    del data[CONF_PASSWORD]
+    hass.config_entries.async_update_entry(entry, data=data)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ArtFrameConfigEntry) -> bool:

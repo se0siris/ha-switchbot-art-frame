@@ -15,8 +15,8 @@ from switchbot.devices.art_frame import COMMAND_SET_IMAGE
 from .const import (
     COMMAND_DELETE_IMAGE,
     COMMAND_DOWNLOAD_IMAGE,
-    COMMAND_DOWNLOAD_PREPARE,
     COMMAND_DOWNLOAD_STATUS,
+    COMMAND_START_WIFI,
     IMAGE_CURRENT,
     IMAGE_FIRST,
     IMAGE_LAST,
@@ -149,7 +149,7 @@ async def async_download_image(
     elif not 1 <= image_id <= 255:
         raise ImageSelectionError("Image ID must be between 1 and 255")
 
-    await _send(device, COMMAND_DOWNLOAD_PREPARE, "prepare for a download")
+    await _send(device, COMMAND_START_WIFI, "connect to Wi-Fi")
     reply = await _send(
         device, COMMAND_DOWNLOAD_IMAGE.format(image_id), "start the download"
     )

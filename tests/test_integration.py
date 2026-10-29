@@ -13,12 +13,42 @@ from homeassistant.setup import async_setup_component
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.switchbot_art_frame.account import AuthError
+from custom_components.switchbot_art_frame.account import (
+    TOKEN_URL,
+    AccountError,
+    AuthError,
+)
 from custom_components.switchbot_art_frame.const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
 
 from .conftest import ADDRESS
 
 ENTITY_ID = "sensor.art_frame_eeff_local_images"
+LOGIN = "custom_components.switchbot_art_frame.account.SwitchBotAccount.async_login"
+TOKENS = {
+    "access_token": "fake-access",
+    "refresh_token": "fake-refresh",
+    "expires_at": 0,
+}
+
+
+async def fake_login(self, email, password):
+    """Stands in for SwitchBotAccount.async_login when the password is right."""
+    if password != "right":
+        raise AuthError("wrong password")
+    self._tokens = dict(TOKENS)
+
+
+async def _setup(hass: HomeAssistant, core_entry, **data) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=core_entry.title,
+        unique_id=core_entry.unique_id,
+        data={CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id, **data},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
 
 
 @pytest.fixture
@@ -27,16 +57,15 @@ async def setup_entry(
 ) -> MockConfigEntry:
     """Our entry, set up against the core entry, with status already read."""
     await art_frame_device.update()
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=core_entry.title,
-        unique_id=core_entry.unique_id,
-        data={CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id},
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    return entry
+    return await _setup(hass, core_entry)
+
+
+def _reauth_flows(hass: HomeAssistant) -> list:
+    return [
+        flow
+        for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        if flow["context"]["source"] == "reauth"
+    ]
 
 
 async def test_config_flow(hass: HomeAssistant, core_entry) -> None:
@@ -69,26 +98,25 @@ async def test_config_flow_with_account(hass: HomeAssistant, core_entry) -> None
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id}
     )
-    login = (
-        "custom_components.switchbot_art_frame.config_flow.SwitchBotAccount.async_login"
-    )
-    with patch(login, side_effect=AuthError("no")):
+    with patch(LOGIN, fake_login):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"email": "a@b.c", "password": "wrong"}
         )
-    assert result["errors"] == {"base": "invalid_auth"}
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"email": "a@b.c", "password": ""}
-    )
-    assert result["errors"] == {"base": "account_incomplete"}
-    with patch(login) as ok:
+        assert result["errors"] == {"base": "invalid_auth"}
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"email": "a@b.c", "password": ""}
+        )
+        assert result["errors"] == {"base": "account_incomplete"}
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"email": "a@b.c", "password": "right"}
         )
-    assert ok.called
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["email"] == "a@b.c"
-    assert result["data"]["password"] == "right"
+    # The tokens are stored, not the password.
+    assert result["data"] == {
+        CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id,
+        "email": "a@b.c",
+        "token": TOKENS,
+    }
 
 
 async def test_reconfigure_adds_account(
@@ -97,10 +125,7 @@ async def test_reconfigure_adds_account(
     assert setup_entry.runtime_data.account is None
     result = await setup_entry.start_reconfigure_flow(hass)
     assert result["step_id"] == "reconfigure"
-    login = (
-        "custom_components.switchbot_art_frame.config_flow.SwitchBotAccount.async_login"
-    )
-    with patch(login):
+    with patch(LOGIN, fake_login):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"email": "a@b.c", "password": "right"}
         )
@@ -108,8 +133,118 @@ async def test_reconfigure_adds_account(
     assert result["reason"] == "reconfigure_successful"
     await hass.async_block_till_done()
     assert setup_entry.data["email"] == "a@b.c"
+    assert setup_entry.data["token"] == TOKENS
+    assert "password" not in setup_entry.data
     assert setup_entry.runtime_data.account is not None
     assert setup_entry.runtime_data.account.mac == "AABBCCDDEEFF"
+
+
+async def test_reconfigure_removes_account(
+    hass: HomeAssistant, core_entry, art_frame_device
+) -> None:
+    entry = await _setup(hass, core_entry, email="a@b.c", token=TOKENS)
+    assert entry.runtime_data.account is not None
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+    assert entry.data == {CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id}
+    assert entry.runtime_data.account is None
+
+
+async def test_reauth(hass: HomeAssistant, core_entry, art_frame_device) -> None:
+    old = {**TOKENS, "access_token": "old-access"}
+    entry = await _setup(hass, core_entry, email="a@b.c", token=old)
+    result = await entry.start_reauth_flow(hass)
+    assert result["step_id"] == "reauth_confirm"
+    assert result["description_placeholders"]["email"] == "a@b.c"
+    with patch(LOGIN, fake_login):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"password": "wrong"}
+        )
+        assert result["errors"] == {"base": "invalid_auth"}
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"password": "right"}
+        )
+    assert result["reason"] == "reauth_successful"
+    await hass.async_block_till_done()
+    assert entry.data["token"] == TOKENS
+    assert entry.data["email"] == "a@b.c"
+    assert "password" not in entry.data
+
+
+async def test_stored_password_swapped_for_tokens(
+    hass: HomeAssistant, core_entry, art_frame_device
+) -> None:
+    """Entries from before 0.6 stored the password; it's replaced on setup."""
+    with patch(LOGIN, fake_login):
+        entry = await _setup(hass, core_entry, email="a@b.c", password="right")
+    assert entry.data == {
+        CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id,
+        "email": "a@b.c",
+        "token": TOKENS,
+    }
+    assert entry.runtime_data.account is not None
+    assert not _reauth_flows(hass)
+
+
+async def test_stored_password_rejected(
+    hass: HomeAssistant, core_entry, art_frame_device
+) -> None:
+    with patch(LOGIN, fake_login):
+        entry = await _setup(hass, core_entry, email="a@b.c", password="old")
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.data == {
+        CONF_SWITCHBOT_ENTRY_ID: core_entry.entry_id,
+        "email": "a@b.c",
+    }
+    assert entry.runtime_data.account is None
+    assert len(_reauth_flows(hass)) == 1
+
+
+async def test_stored_password_kept_while_switchbot_unreachable(
+    hass: HomeAssistant, core_entry, art_frame_device
+) -> None:
+    with patch(LOGIN, side_effect=AccountError("servers down")):
+        entry = await _setup(hass, core_entry, email="a@b.c", password="right")
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.data["password"] == "right"
+    assert entry.runtime_data.account is None
+    assert not _reauth_flows(hass)
+
+
+async def test_renewed_tokens_are_saved(
+    hass: HomeAssistant, core_entry, art_frame_device, aioclient_mock
+) -> None:
+    entry = await _setup(hass, core_entry, email="a@b.c", token=TOKENS)
+    aioclient_mock.post(
+        TOKEN_URL,
+        json={
+            "access_token": "new-access",
+            "refresh_token": "fake-refresh",
+            "expires_in": 7200,
+        },
+    )
+    aioclient_mock.post(
+        "https://account.api.switchbot.net/account/api/v1/user/userinfo",
+        json={"statusCode": 100, "body": {"botRegion": "eu"}},
+    )
+    aioclient_mock.post(
+        "https://wonderlabs.eu.api.switchbot.net/wonder/device/v3/getdevice",
+        json={
+            "statusCode": 100,
+            "body": {"Items": [{"device_mac": "AABBCCDDEEFF", "groupID": "G"}]},
+        },
+    )
+    aioclient_mock.post(
+        "https://wonderlabs.eu.api.switchbot.net/device/artframe/api/v1/images/list",
+        json={"resultCode": 100, "data": {"images": []}},
+    )
+    await entry.runtime_data.account.async_list_images()
+    assert entry.data["token"]["access_token"] == "new-access"
+    assert entry.data["token"]["refresh_token"] == "fake-refresh"
+    # Saving the tokens doesn't reload the entry.
+    assert entry.state is ConfigEntryState.LOADED
 
 
 async def test_config_flow_no_frames(hass: HomeAssistant) -> None:
@@ -246,9 +381,7 @@ async def test_download_action_frame_full(hass: HomeAssistant, setup_entry) -> N
         )
 
 
-async def test_download_action_needs_image_id(
-    hass: HomeAssistant, setup_entry
-) -> None:
+async def test_download_action_needs_image_id(hass: HomeAssistant, setup_entry) -> None:
     import probatio
 
     with pytest.raises(probatio.Invalid):
@@ -373,6 +506,50 @@ async def test_delete_cloud_failure_still_reports_frame_delete(
     assert 0x10 not in frame.image_ids
     assert response[ENTITY_ID]["cloud_deleted"] is False
     assert "servers down" in response[ENTITY_ID]["cloud_error"]
+    assert not _reauth_flows(hass)
+
+
+class SessionEnded:
+    """An account whose refresh token SwitchBot no longer accepts."""
+
+    async def async_list_images(self):
+        raise AuthError("refresh token expired")
+
+    async def async_delete_images(self, ids):
+        raise AuthError("refresh token expired")
+
+
+async def test_delete_session_ended_asks_for_password(
+    hass: HomeAssistant, setup_entry, frame
+) -> None:
+    _sensor_entity(hass)._account = SessionEnded()  # noqa: SLF001
+    response = await hass.services.async_call(
+        DOMAIN,
+        "delete_image",
+        {"entity_id": ENTITY_ID, "image": "oldest"},
+        blocking=True,
+        return_response=True,
+    )
+    await hass.async_block_till_done()
+    assert 0x10 not in frame.image_ids
+    assert response[ENTITY_ID]["cloud_deleted"] is False
+    assert "password again" in response[ENTITY_ID]["cloud_error"]
+    assert len(_reauth_flows(hass)) == 1
+
+
+async def test_show_image_session_ended_asks_for_password(
+    hass: HomeAssistant, setup_entry
+) -> None:
+    _sensor_entity(hass)._account = SessionEnded()  # noqa: SLF001
+    with pytest.raises(HomeAssistantError, match="password again"):
+        await hass.services.async_call(
+            DOMAIN,
+            "show_image",
+            {"entity_id": ENTITY_ID, "image_url": "https://example.com/a.jpg"},
+            blocking=True,
+        )
+    await hass.async_block_till_done()
+    assert len(_reauth_flows(hass)) == 1
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
