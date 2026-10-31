@@ -7,6 +7,7 @@
     "http",
     "switchbot"
   ],
+  "categories": ["media_entertainment"],
   "codeowners": ["@se0siris"],
   "config_flow": true,
   "documentation": "https://github.com/se0siris/ha-switchbot-art-frame",
