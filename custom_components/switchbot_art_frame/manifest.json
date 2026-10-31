@@ -6,10 +6,12 @@
     "http",
     "switchbot"
   ],
-  "codeowners": [],
+  "codeowners": ["@se0siris"],
   "config_flow": true,
+  "documentation": "https://github.com/se0siris/ha-switchbot-art-frame",
   "integration_type": "device",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/se0siris/ha-switchbot-art-frame/issues",
   "requirements": [],
-  "version": "0.6.0"
+  "version": "0.6.1"
 }
