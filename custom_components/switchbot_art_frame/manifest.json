@@ -2,6 +2,7 @@
   "domain": "switchbot_art_frame",
   "name": "SwitchBot Art Frame Tools",
   "after_dependencies": [
+    "bluetooth",
     "frontend",
     "http",
     "switchbot"
