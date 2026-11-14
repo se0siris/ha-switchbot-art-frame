@@ -14,7 +14,7 @@ from custom_components.switchbot_art_frame.account import (
     SwitchBotAccount,
 )
 
-from .conftest import ADDRESS
+from .conftest import ADDRESS, response_error
 
 ACCOUNT = "https://account.api.switchbot.net/account/api/v1/user"
 WONDER = "https://wonderlabs.eu.api.switchbot.net"
@@ -142,6 +142,28 @@ async def test_list_images_error(hass: HomeAssistant, aioclient_mock) -> None:
         json={"resultCode": 191, "data": None, "message": "not in this group"},
     )
     with pytest.raises(AccountError, match="not in this group"):
+        await account(hass).async_list_images()
+
+
+async def test_request_error_hides_token(hass: HomeAssistant, aioclient_mock) -> None:
+    """The error message has the status, not the request's authorization header."""
+    mock_frame_lookup(aioclient_mock)
+    url = f"{WONDER}/device/artframe/api/v1/images/list"
+    aioclient_mock.post(url, exc=response_error(url, {"authorization": "tok1"}))
+    with pytest.raises(AccountError) as err:
+        await account(hass).async_list_images()
+    assert "502" in str(err.value)
+    assert "tok1" not in str(err.value)
+
+
+async def test_error_without_text_is_named(
+    hass: HomeAssistant, aioclient_mock
+) -> None:
+    mock_frame_lookup(aioclient_mock)
+    aioclient_mock.post(
+        f"{WONDER}/device/artframe/api/v1/images/list", exc=TimeoutError()
+    )
+    with pytest.raises(AccountError, match=r"images/list: TimeoutError$"):
         await account(hass).async_list_images()
 
 

@@ -52,6 +52,15 @@ class AuthError(AccountError):
     """Login failed or the session was rejected."""
 
 
+def describe(err: BaseException) -> str:
+    """Describe an error for a message: its text, or its type if it has none.
+
+    Never its repr: for aiohttp errors that includes the request headers, and
+    with them the authorization token.
+    """
+    return str(err) or type(err).__name__
+
+
 class SwitchBotAccount:
     """A session for one Art Frame, kept going with a refresh token.
 
@@ -99,7 +108,7 @@ class SwitchBotAccount:
                     raise AccountError(f"{path}: HTTP {resp.status}")
                 body = await resp.json(content_type=None)
         except (ClientError, TimeoutError) as err:
-            raise AccountError(f"{path}: {err!r}") from err
+            raise AccountError(f"{path}: {describe(err)}") from err
         if not isinstance(body, dict):
             raise AccountError(f"{path}: unexpected reply {body!r}")
         code = body.get("statusCode", body.get("resultCode"))
@@ -162,7 +171,7 @@ class SwitchBotAccount:
                     body = await resp.json(content_type=None)
             except (ClientError, TimeoutError, ValueError) as err:
                 raise AccountError(
-                    f"Refreshing the SwitchBot session: {err!r}"
+                    f"Refreshing the SwitchBot session: {describe(err)}"
                 ) from err
             if status >= 500 or status == 429:
                 raise AccountError(f"Refreshing the SwitchBot session: HTTP {status}")

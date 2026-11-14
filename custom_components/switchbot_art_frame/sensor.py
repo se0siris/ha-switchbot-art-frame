@@ -21,7 +21,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .account import AccountError, AuthError, SwitchBotAccount
+from .account import AccountError, AuthError, SwitchBotAccount, describe
 from .art_frame import (
     ArtFrameError,
     ImageSelectionError,
@@ -213,7 +213,9 @@ class ArtFrameLocalImagesSensor(
                 },
             )
         except Exception as err:
-            raise HomeAssistantError(f"SwitchBot Cloud upload failed: {err!r}") from err
+            raise HomeAssistantError(
+                f"SwitchBot Cloud upload failed: {describe(err)}"
+            ) from err
         _LOGGER.debug("uploadImage reply: %s", body)
         return body
 

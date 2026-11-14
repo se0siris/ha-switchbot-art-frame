@@ -6,9 +6,12 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from aiohttp import ContentTypeError, RequestInfo
 from bleak.backends.device import BLEDevice
+from multidict import CIMultiDict, CIMultiDictProxy
 import pytest
 from switchbot import SwitchBotAdvertisement, SwitchbotArtFrame
+from yarl import URL
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
@@ -22,6 +25,14 @@ KEY = "00112233445566778899aabbccddeeff"  # dummy; the simulator never encrypts
 
 # A full frame: ten stored images, the last one on display.
 IMAGE_IDS = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19]
+
+
+def response_error(url: str, headers: dict) -> ContentTypeError:
+    """An aiohttp response error, which carries the request's headers."""
+    request_info = RequestInfo(
+        URL(url), "POST", CIMultiDictProxy(CIMultiDict(headers)), URL(url)
+    )
+    return ContentTypeError(request_info, (), status=502, message="text/html")
 
 
 @pytest.fixture(autouse=True)

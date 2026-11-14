@@ -21,7 +21,7 @@ from custom_components.switchbot_art_frame.account import (
 )
 from custom_components.switchbot_art_frame.const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
 
-from .conftest import ADDRESS
+from .conftest import ADDRESS, response_error
 
 ENTITY_ID = "sensor.art_frame_eeff_local_images"
 LOGIN = "custom_components.switchbot_art_frame.account.SwitchBotAccount.async_login"
@@ -436,6 +436,32 @@ async def test_upload_action_returns_cloud_reply(
         )
     ]
     # A fake entry: stop HA importing the real integration to unload it.
+    cloud.mock_state(hass, ConfigEntryState.NOT_LOADED)
+
+
+async def test_upload_error_hides_token(hass: HomeAssistant, setup_entry) -> None:
+    """A non-JSON reply's error carries the Cloud API token in its request headers."""
+    url = "https://api.switch-bot.com/v1.1/devices/AABBCCDDEEFF/commands"
+    error = response_error(url, {"Authorization": "cloud-token"})
+
+    class FakeApi:
+        async def _request(self, method, path, json=None):
+            raise error
+
+    cloud = MockConfigEntry(domain="switchbot_cloud")
+    cloud.add_to_hass(hass)
+    cloud.mock_state(hass, ConfigEntryState.LOADED)
+    cloud.runtime_data = type("D", (), {"api": FakeApi()})()
+
+    with pytest.raises(HomeAssistantError, match="upload failed: 502") as err:
+        await hass.services.async_call(
+            DOMAIN,
+            "upload_image",
+            {"entity_id": ENTITY_ID, "image_url": "https://example.com/a.jpg"},
+            blocking=True,
+            return_response=True,
+        )
+    assert "cloud-token" not in str(err.value)
     cloud.mock_state(hass, ConfigEntryState.NOT_LOADED)
 
 
