@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import patch
 
+import aiohttp
 import pytest
 
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
@@ -20,6 +21,7 @@ from custom_components.switchbot_art_frame.account import (
     AuthError,
 )
 from custom_components.switchbot_art_frame.const import CONF_SWITCHBOT_ENTRY_ID, DOMAIN
+from custom_components.switchbot_art_frame.upload import MAX_FILE_BYTES, UPLOAD_URL
 
 from .conftest import ADDRESS, response_error
 
@@ -789,3 +791,87 @@ async def test_show_image_calls_run_one_at_a_time(
     assert two["removed_pending_uploads"] == []  # left the first's upload alone
     assert two["deleted_image_id"] == 0x10  # frame was full: oldest made room
     assert {0x1A, 0x1B} <= set(frame.image_ids)
+
+
+@pytest.fixture
+async def http(hass: HomeAssistant) -> None:
+    """HTTP, set up before our integration so that it registers its upload view."""
+    assert await async_setup_component(hass, "http", {})
+
+
+@pytest.fixture
+async def upload(http, cloud_flow, hass_client):
+    """Post a form to the card's upload endpoint; return (status, JSON body)."""
+
+    async def post(file: bytes | None = PNG, entity_id=ENTITY_ID, token=None):
+        form = aiohttp.FormData()
+        if entity_id is not None:
+            form.add_field("entity_id", entity_id)
+        if file is not None:
+            form.add_field("file", file, filename="image.png")
+        client = await (hass_client(token) if token else hass_client())
+        resp = await client.post(UPLOAD_URL, data=form)
+        if resp.content_type != "application/json":
+            return resp.status, {}
+        return resp.status, await resp.json()
+
+    return post
+
+
+async def test_upload_view_shows_image(
+    hass: HomeAssistant, upload, cloud_flow, frame
+) -> None:
+    import base64
+
+    status, body = await upload()
+    assert status == 200
+    assert body["image_id"] == 0x77
+    assert frame.current == 0x77
+    assert cloud_flow == [
+        {"imageBase64": "data:image/png;base64," + base64.b64encode(PNG).decode()}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "status", "message"),
+    [
+        ({"file": b"GIF89a"}, 400, "PNG or JPEG"),
+        ({"file": PNG + b"\x00" * MAX_FILE_BYTES}, 400, "too large"),
+        ({"file": None}, 400, "entity_id and file"),
+        ({"entity_id": None}, 400, "entity_id and file"),
+        ({"entity_id": "sensor.other"}, 404, "not an Art Frame"),
+    ],
+)
+async def test_upload_view_bad_request(
+    hass: HomeAssistant, upload, cloud_flow, kwargs, status, message
+) -> None:
+    got_status, body = await upload(**kwargs)
+    assert got_status == status
+    assert message in body["message"]
+    assert cloud_flow == []
+
+
+async def test_upload_view_needs_control(
+    hass: HomeAssistant, upload, cloud_flow, hass_read_only_access_token
+) -> None:
+    status, _ = await upload(token=hass_read_only_access_token)
+    assert status == 401
+    assert cloud_flow == []
+
+
+async def test_upload_view_needs_account(hass: HomeAssistant, upload) -> None:
+    _sensor_entity(hass)._account = None  # noqa: SLF001
+    status, body = await upload()
+    assert status == 400
+    assert "SwitchBot account" in body["message"]
+
+
+async def test_upload_view_logs_frame_failure(
+    hass: HomeAssistant, upload, frame, caplog
+) -> None:
+    """A failure is shown on the card and also logged, as nothing else records it."""
+    frame.refuse = {"570F7A0101"}  # the download command
+    status, body = await upload()
+    assert status == 500
+    assert "Showing the image failed" in body["message"]
+    assert "uploaded from the card failed" in caplog.text

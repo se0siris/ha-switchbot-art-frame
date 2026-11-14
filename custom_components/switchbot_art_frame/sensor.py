@@ -273,13 +273,24 @@ class ArtFrameLocalImagesSensor(
         show: bool = True,
     ) -> ServiceResponse:
         """Handle the show_image action: the whole upload, no app."""
+        self._require_account()
+        parameter = await self._async_image_parameter(image_url, image_path, image_data)
+        return await self.async_show_upload(parameter, make_room, show)
+
+    def _require_account(self) -> None:
         if self._account is None:
             raise ServiceValidationError(
                 "Add your SwitchBot account to this integration first "
                 "(Settings > Devices & services > SwitchBot Art Frame Tools > "
                 "Reconfigure)"
             )
-        parameter = await self._async_image_parameter(image_url, image_path, image_data)
+
+    async def async_show_upload(
+        self, parameter: dict[str, str], make_room: bool = True, show: bool = True
+    ) -> ServiceResponse:
+        """Upload with Cloud API parameters and show the image: show_image
+        once the image source is read (also used by the card's upload view)."""
+        self._require_account()
         # Check before anything changes (make_room may delete an image).
         if len(parameter.get("imageBase64", "")) > MAX_BASE64_CHARS:
             raise ServiceValidationError(

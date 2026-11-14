@@ -148,7 +148,9 @@ Fields (give exactly one of the first three):
 - `image_path`: a PNG or JPEG on the Home Assistant machine, in a folder Home
   Assistant is allowed to read (such as `/config/www` or `/media`; see
   `allowlist_external_dirs`);
-- `image_data`: a PNG or JPEG, base64-encoded or as a `data:` URI;
+- `image_data`: a PNG or JPEG, base64-encoded or as a `data:` URI. Avoid it
+  in automations and scripts: their traces keep the action's data, image
+  included. Use `image_path` there;
 - `make_room` (default `true`): if the frame is full, delete its oldest image
   first, and if SwitchBot's cloud album is full of uploads the frame never
   downloaded, remove the oldest of them. With `false`, the action fails
@@ -323,8 +325,9 @@ response_variable: upload
 </p>
 
 The integration serves and loads its own card, so there's no resource to add.
-It sends images with `show_image`, so it needs the same SwitchBot Cloud
-integration and account.
+It does what `show_image` does, so it needs the same SwitchBot Cloud
+integration and account. Anyone who can use the dashboard can send images, as
+long as their Home Assistant user may control the Local images sensor.
 
 ```yaml
 type: custom:switchbot-art-frame-card
@@ -350,6 +353,11 @@ card resizes the image in the browser to the frame's resolution (for the
 that fits under the upload limit, or as a JPEG otherwise. On the 31.5" frame
 a detailed photo may need a fairly low JPEG quality to fit, and one that
 still doesn't fit is refused with an error. Sending takes about a minute.
+
+The card uploads the image to the integration as a file (to
+`/api/switchbot_art_frame/show_image`) rather than calling `show_image`, so
+the image isn't passed around as action data and nothing is kept on Home
+Assistant.
 
 ## How it works
 

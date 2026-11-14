@@ -9,8 +9,10 @@
  *   orientation: portrait   # or landscape
  *   size: 13.3              # or 7.3 or 31.5 (inches)
  *
- * The image is fitted to the frame in the browser and sent to the
- * show_image action as base64 (image_data), so nothing is stored on HA.
+ * The image is fitted to the frame in the browser and uploaded as a file to
+ * the integration's show_image endpoint, which does what the show_image action
+ * does. Nothing is stored on HA, and the image doesn't go through the event
+ * bus as action data.
  */
 
 const CARD_TAG = "switchbot-art-frame-card";
@@ -27,9 +29,11 @@ const DEFAULT_SIZE = "13.3";
 // JPEG qualities to try, best first, when the PNG is too large to send.
 const JPEG_QUALITIES = [0.92, 0.85, 0.75, 0.65, 0.5, 0.4, 0.3];
 // SwitchBot's upload endpoint rejects large bodies (413). Its limit isn't
-// documented; the error comes from Fastify, whose default is 1 MiB, so stay
-// well under that.
-const MAX_DATA_CHARS = 900_000;
+// documented; the error comes from Fastify, whose default is 1 MiB. The image
+// is sent to it as base64, a third larger, so keep the file under this
+// (the integration's MAX_FILE_BYTES).
+const MAX_FILE_BYTES = 674_000;
+const UPLOAD_URL = "/api/switchbot_art_frame/show_image";
 const HINT =
   '<span class="hint">Choose an image <small>(PNG or JPEG)</small></span>';
 
@@ -254,19 +258,39 @@ class SwitchBotArtFrameCard extends HTMLElement {
     return canvas;
   }
 
-  _encode(canvas) {
+  async _encode(canvas) {
     // PNG keeps flat colours clean for the frame's dithering; fall back to
-    // JPEG for photos that would make the message too large. The lowest
+    // JPEG for photos that would make the upload too large. The lowest
     // qualities are only reached on the largest frames.
-    let data = canvas.toDataURL("image/png");
+    const toBlob = (type, quality) =>
+      new Promise((resolve, reject) =>
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error("Couldn't encode the image"))),
+          type,
+          quality,
+        ),
+      );
+    let blob = await toBlob("image/png");
     for (const q of JPEG_QUALITIES) {
-      if (data.length <= MAX_DATA_CHARS) break;
-      data = canvas.toDataURL("image/jpeg", q);
+      if (blob.size <= MAX_FILE_BYTES) break;
+      blob = await toBlob("image/jpeg", q);
     }
-    if (data.length > MAX_DATA_CHARS) {
+    if (blob.size > MAX_FILE_BYTES) {
       throw new Error("The image is too large to send, even as a low-quality JPEG");
     }
-    return data;
+    return blob;
+  }
+
+  /** Upload the image to the integration's endpoint; return show_image's response. */
+  async _upload(blob) {
+    const form = new FormData();
+    form.append("entity_id", this._config.entity);
+    form.append("file", blob, blob.type === "image/png" ? "image.png" : "image.jpg");
+    const resp = await this._hass.fetchWithAuth(UPLOAD_URL, { method: "POST", body: form });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.ok) return body;
+    if (resp.status === 401) throw new Error("You aren't allowed to control this frame");
+    throw new Error(body.message ?? `HTTP ${resp.status}`);
   }
 
   async _send() {
@@ -275,16 +299,7 @@ class SwitchBotArtFrameCard extends HTMLElement {
     this._sync();
     this._status("Uploading and sending to the frame. This takes about a minute\u2026");
     try {
-      const data = this._encode(this._draw());
-      const reply = await this._hass.connection.sendMessagePromise({
-        type: "call_service",
-        domain: "switchbot_art_frame",
-        service: "show_image",
-        service_data: { image_data: data },
-        target: { entity_id: this._config.entity },
-        return_response: true,
-      });
-      const r = reply?.response?.[this._config.entity] ?? reply?.response ?? {};
+      const r = await this._upload(await this._encode(this._draw()));
       const replaced = r.deleted_image_id != null ? " (replaced the oldest image)" : "";
       this._status(`Done: it's on the frame${replaced}.`, "ok");
       this._busy = false;

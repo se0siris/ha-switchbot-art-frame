@@ -57,8 +57,18 @@ CARD_URL = f"/{DOMAIN}/art-frame-card.js"
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register actions, and serve and load the dashboard card."""
     async_setup_services(hass)
+    _register_upload_view(hass)
     await _async_register_card(hass)
     return True
+
+
+def _register_upload_view(hass: HomeAssistant) -> None:
+    """Add the endpoint the card uploads images to."""
+    if "http" not in hass.config.components:
+        return  # e.g. in tests
+    from .upload import ShowImageView  # noqa: PLC0415
+
+    hass.http.register_view(ShowImageView())
 
 
 async def _async_register_card(hass: HomeAssistant) -> None:
