@@ -39,9 +39,12 @@ _LOGGER = logging.getLogger(__name__)
 SUCCESS_CODES = frozenset({0x01, 0x06, 0x0E})
 
 POLL_INTERVAL = 1.0  # seconds between progress polls, as the app does
-DOWNLOAD_TIMEOUT = 120.0  # the app's download took about 25 s
-DOWNLOAD_ATTEMPTS = 2  # retry a quick failure once; never retry a timeout
+DOWNLOAD_TIMEOUT = 120.0  # for the whole download; the app's took about 25 s
+DOWNLOAD_ATTEMPTS = 2  # start again once, only if the download never started
 RETRY_DELAY = 5.0  # seconds to let the frame's Wi-Fi and Bluetooth settle
+# How long the frame may report state 0 (idle) after the download command, or
+# after a progress read it didn't answer, before that counts as a failure.
+START_GRACE = 10.0
 
 if TYPE_CHECKING:
     from switchbot import SwitchbotArtFrame
@@ -53,6 +56,10 @@ class ArtFrameError(Exception):
 
 class DownloadTimeoutError(ArtFrameError):
     """The frame was still downloading when we gave up (not retried)."""
+
+
+class DownloadNotStartedError(ArtFrameError):
+    """The download failed before the frame reported it running (retried)."""
 
 
 class ImageSelectionError(ValueError):
@@ -154,8 +161,10 @@ async def async_download_image(
     must be the ID the cloud assigned it: the frame asks the cloud for that
     ID, and any other fails (download state 3).
 
-    A quick failure (a refused command, a failed download, a Bluetooth error)
-    is retried once. A timeout isn't: the frame may still be downloading.
+    Refused or lost progress reads are waited out. The download is started
+    again (once) only if it never got going; once the frame reports it
+    downloading, the command is never sent twice. Before reporting a failure
+    the frame's image list is checked, in case the image arrived anyway.
     """
     image_ids, _ = await async_refresh(device)
     if len(image_ids) >= MAX_LOCAL_IMAGES:
@@ -167,22 +176,37 @@ async def async_download_image(
     elif not 1 <= image_id <= 255:
         raise ImageSelectionError("Image ID must be between 1 and 255")
 
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
     progress: list[int] = []
+    resume = False  # the frame is already downloading: just poll
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         try:
-            progress = await _async_fetch(device, image_id)
+            start_reply = None if resume else await _async_start(device, image_id)
+            progress = await _async_poll(
+                device, image_id, deadline, started=resume, start_reply=start_reply
+            )
             break
-        except DownloadTimeoutError:
-            raise
-        except (ArtFrameError, SwitchbotOperationError, BleakError):
-            if attempt == DOWNLOAD_ATTEMPTS:
+        except DownloadNotStartedError:
+            retry = (
+                attempt < DOWNLOAD_ATTEMPTS
+                and time.monotonic() + RETRY_DELAY < deadline
+            )
+            if not retry:
+                if await _async_image_arrived(device, image_id):
+                    break
                 raise
+        except ArtFrameError:
+            # Failed or timed out after the download started: never restart
+            # it, as the frame may still be busy with it.
+            if await _async_image_arrived(device, image_id):
+                break
+            raise
         await asyncio.sleep(RETRY_DELAY)
-        # The frame may have finished after all
-        # (Bluetooth dropped after the download completed?)
-        image_ids, _ = await async_refresh(device)
-        if image_id in image_ids:
+        # The frame may have finished after all, or still be downloading
+        # (a lost reply to the download command).
+        if await _async_image_arrived(device, image_id):
             break
+        resume = await _async_downloading(device)
 
     if show:
         await _send(device, COMMAND_SET_IMAGE.format(f"{image_id:02X}"), "show it")
@@ -196,32 +220,93 @@ async def async_download_image(
     }
 
 
-async def _async_fetch(device: SwitchbotArtFrame, image_id: int) -> list[int]:
-    """Make one download attempt; return the progress percentages reported."""
-    await _send(device, COMMAND_START_WIFI, "connect to Wi-Fi")
-    reply = await _send(
-        device, COMMAND_DOWNLOAD_IMAGE.format(image_id), "start the download"
-    )
+async def _async_start(device: SwitchbotArtFrame, image_id: int) -> bytes:
+    """Send Wi-Fi start and the download command; return the latter's reply."""
+    try:
+        await _send(device, COMMAND_START_WIFI, "connect to Wi-Fi")
+        return await _send(
+            device, COMMAND_DOWNLOAD_IMAGE.format(image_id), "start the download"
+        )
+    except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
+        raise DownloadNotStartedError(str(err) or type(err).__name__) from err
 
+
+async def _async_poll(
+    device: SwitchbotArtFrame,
+    image_id: int,
+    deadline: float,
+    started: bool,
+    start_reply: bytes | None,
+) -> list[int]:
+    """Poll the download until it finishes; return the progress percentages.
+
+    Raises DownloadNotStartedError if it failed before the frame reported it
+    downloading (safe to start again), ArtFrameError if it failed after, and
+    DownloadTimeoutError at the deadline.
+    """
     progress: list[int] = []
-    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
+    status: bytes | None = None
+    # State 0 (idle) is expected for a few seconds after the download command
+    # and after a read the frame didn't answer.
+    quiet_since = time.monotonic()
+
+    def detail() -> str:
+        last = status.hex() if status else None
+        start = start_reply.hex() if start_reply else None
+        return f"last reply {last}, start reply {start}"
+
     while True:
         await asyncio.sleep(POLL_INTERVAL)
-        status = (await _send(device, COMMAND_DOWNLOAD_STATUS, "report progress"))[1:]
-        if len(status) <= STATUS_PERCENT:
-            raise ArtFrameError(f"Unexpected progress reply {status.hex()}")
-        state = status[STATUS_STATE]
-        if state == 2 and image_id in status[STATUS_IDS]:
-            return progress
-        if not progress or progress[-1] != status[STATUS_PERCENT]:
-            progress.append(status[STATUS_PERCENT])
-        if state not in (1, 2):
-            raise ArtFrameError(
-                f"Download failed (state {state}, last reply {status.hex()}, "
-                f"start reply {reply.hex()})"
-            )
+        reply = await _async_read_progress(device)
+        if reply is None:
+            quiet_since = time.monotonic()
+        else:
+            status = reply
+            state = status[STATUS_STATE]
+            if state == 2 and image_id in status[STATUS_IDS]:
+                return progress
+            if not progress or progress[-1] != status[STATUS_PERCENT]:
+                progress.append(status[STATUS_PERCENT])
+            if state == 1:
+                started = True
+            elif state != 2 and (
+                state != 0 or time.monotonic() - quiet_since > START_GRACE
+            ):
+                error = ArtFrameError if started else DownloadNotStartedError
+                raise error(f"Download failed (state {state}, {detail()})")
         if time.monotonic() > deadline:
-            raise DownloadTimeoutError(
-                f"Download did not finish (state {state}, last reply "
-                f"{status.hex()}, start reply {reply.hex()})"
-            )
+            raise DownloadTimeoutError(f"Download did not finish ({detail()})")
+
+
+async def _async_read_progress(device: SwitchbotArtFrame) -> bytes | None:
+    """Read the download status (after the result byte).
+
+    None if the frame refused or didn't answer, which it sometimes does while
+    downloading.
+    """
+    try:
+        reply = await _send(device, COMMAND_DOWNLOAD_STATUS, "report progress")
+    except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
+        _LOGGER.debug("No download progress from the frame: %s", err)
+        return None
+    status = reply[1:]
+    if len(status) <= STATUS_PERCENT:
+        _LOGGER.debug("Unexpected progress reply %s", status.hex())
+        return None
+    return status
+
+
+async def _async_downloading(device: SwitchbotArtFrame) -> bool:
+    """Whether the frame reports a download in progress."""
+    status = await _async_read_progress(device)
+    return status is not None and status[STATUS_STATE] == 1
+
+
+async def _async_image_arrived(device: SwitchbotArtFrame, image_id: int) -> bool:
+    """Whether the image is on the frame (False if the list can't be read)."""
+    try:
+        image_ids, _ = await async_refresh(device)
+    except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
+        _LOGGER.debug("Couldn't read the image list: %s", err)
+        return False
+    return image_id in image_ids

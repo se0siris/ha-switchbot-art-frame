@@ -179,8 +179,8 @@ The action:
 4. finds the ID SwitchBot assigned to the new image in the cloud album;
 5. tells the frame over Bluetooth to download that image, which it fetches
    over its own Wi-Fi (about 25 seconds), and shows it (unless `show` is
-   `false`). A download that fails
-   quickly is retried once, as for `download_image`.
+   `false`). A download that never starts is retried once, as for
+   `download_image`.
 
 Response:
 
@@ -277,10 +277,13 @@ Fields:
 
 The frame must have a free slot, and the ID must not already be on it.
 
-If the download fails quickly (the frame refuses a command, reports a failed
-download, or the Bluetooth connection drops), it is retried once after a few
-seconds. A download still running after 2 minutes isn't retried: the frame may
-yet finish it.
+While the frame downloads it sometimes doesn't answer the progress check, or
+the Bluetooth connection drops for a moment; the action waits these out. If
+the download never starts (the frame refuses the command, or reports it failed
+or idle before downloading), it is started again once, after a few seconds.
+Once the frame has started downloading, the download is never started a second
+time. Before reporting a failure, or a download still running after 2 minutes,
+the action checks whether the image is on the frame after all.
 
 Response: `image_id`, `image_ids`, `current_image_id` and `progress`, as for
 `show_image`.

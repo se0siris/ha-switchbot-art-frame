@@ -53,6 +53,9 @@ def fast_polling(monkeypatch):
     monkeypatch.setattr(
         "custom_components.switchbot_art_frame.art_frame.RETRY_DELAY", 0
     )
+    monkeypatch.setattr(
+        "custom_components.switchbot_art_frame.art_frame.START_GRACE", 0.05
+    )
 
 
 @dataclass
@@ -75,19 +78,37 @@ class FrameSimulator:
     )
     # How many downloads fail (state 3) before one succeeds.
     download_failures: int = 0
+    # A failing download reports state 3 after its first state-1 reading
+    # (it had started) instead of on the first poll.
+    fail_after_start: bool = False
+    # State-0 (idle) readings after each download command, before state 1.
+    idle_polls: int = 0
+    # Progress polls (counted from 1 for each download) the frame refuses.
+    refused_polls: set[int] = field(default_factory=set)
     _downloading: int | None = None
     _failing: bool = False
+    _started: bool = False
+    _idle_left: int = 0
+    _polls: int = 0
     _steps_left: list[int] = field(default_factory=list)
 
     def _download_status(self) -> bytes:
         ids = self.image_ids
+        if self._downloading is not None:
+            self._polls += 1
+            if self._polls in self.refused_polls:
+                return b"\x05"
         if self._downloading is None:
             state, pct, code = 0, 100, 0x1E
-        elif self._failing:
+        elif self._idle_left:
+            self._idle_left -= 1
+            state, pct, code = 0, 100, 0x1E
+        elif self._failing and (self._started or not self.fail_after_start):
             self._downloading = None
             self._failing = False
             state, pct, code = 3, 0, 0x0A
         elif self._steps_left:
+            self._started = True
             state, pct, code = 1, self._steps_left.pop(0), 0x0A
         elif self.download_steps is None:
             state, pct, code = 1, 0, 0x0A
@@ -107,6 +128,8 @@ class FrameSimulator:
         if any(key.startswith(prefix) for prefix in self.refuse):
             return b"\x00"
         reply = self._answer(key)
+        if reply[0] != 0x01:  # a refusal from _answer
+            return reply
         return bytes([self.reply_code]) + reply[1:]
 
     def _answer(self, key: str) -> bytes:
@@ -128,6 +151,9 @@ class FrameSimulator:
         if key.startswith("570F7A0101"):  # download
             self._downloading = int(key[10:12], 16)
             self._steps_left = list(self.download_steps or [])
+            self._started = False
+            self._idle_left = self.idle_polls
+            self._polls = 0
             if self.download_failures:
                 self.download_failures -= 1
                 self._failing = True

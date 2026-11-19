@@ -1,5 +1,6 @@
 """Tests for the frame-level logic."""
 
+from bleak.exc import BleakError
 import pytest
 
 from custom_components.switchbot_art_frame.art_frame import (
@@ -146,13 +147,109 @@ async def test_download_late_success_not_retried(frame, art_frame_device) -> Non
 
     async def lose_progress_reply(key, retry=None):
         if key.upper() == "570F7B00":
-            frame.image_ids.append(0x1A)  # the frame finishes regardless
+            if 0x1A not in frame.image_ids:
+                frame.image_ids.append(0x1A)  # the frame finishes regardless
             return b"\x00"
         return await send(key, retry)
 
     art_frame_device._send_command = lose_progress_reply  # noqa: SLF001
     result = await async_download_image(art_frame_device, 0x1A)
     assert result["image_id"] == 0x1A
+    assert result["current_image_id"] == 0x1A
+    assert frame.sent.count("570F7A01011A") == 1
+
+
+async def test_download_waits_out_refused_reads(frame, art_frame_device) -> None:
+    """The frame sometimes refuses the progress read while it downloads."""
+    frame.image_ids.pop()
+    frame.refused_polls = {2, 3, 4}
+    result = await async_download_image(art_frame_device, 0x1A)
+    assert result["current_image_id"] == 0x1A
+    assert frame.sent.count("570F7A01011A") == 1
+
+
+async def test_download_waits_out_bluetooth_error(frame, art_frame_device) -> None:
+    frame.image_ids.pop()
+    send = art_frame_device._send_command  # noqa: SLF001
+    polls = 0
+
+    async def drop_second_poll(key, retry=None):
+        nonlocal polls
+        if key.upper() == "570F7B00":
+            polls += 1
+            if polls == 2:
+                raise BleakError("Device unexpectedly disconnected")
+        return await send(key, retry)
+
+    art_frame_device._send_command = drop_second_poll  # noqa: SLF001
+    result = await async_download_image(art_frame_device, 0x1A)
+    assert result["current_image_id"] == 0x1A
+    assert frame.sent.count("570F7A01011A") == 1
+
+
+async def test_download_idle_at_first(frame, art_frame_device) -> None:
+    """State 0 for a few seconds after the download command is normal."""
+    frame.image_ids.pop()
+    frame.idle_polls = 3
+    result = await async_download_image(art_frame_device, 0x1A)
+    assert result["current_image_id"] == 0x1A
+    assert frame.sent.count("570F7A01011A") == 1
+
+
+async def test_download_never_starts(frame, art_frame_device) -> None:
+    """Idle past the grace period: the download didn't start, so start again."""
+    frame.image_ids.pop()
+    frame.idle_polls = 10**9
+    with pytest.raises(ArtFrameError, match=r"Download failed \(state 0"):
+        await async_download_image(art_frame_device, 0x1A)
+    assert frame.sent.count("570F7A01011A") == 2
+
+
+async def test_download_failure_after_start_not_retried(
+    frame, art_frame_device
+) -> None:
+    """Once the frame has been downloading, the command is never sent again."""
+    frame.image_ids.pop()
+    frame.download_failures = 1
+    frame.fail_after_start = True
+    with pytest.raises(ArtFrameError, match=r"Download failed \(state 3"):
+        await async_download_image(art_frame_device, 0x1A)
+    assert frame.sent.count("570F7A01011A") == 1
+
+
+async def test_download_failure_but_image_arrived(frame, art_frame_device) -> None:
+    """A failure is only reported if the image isn't on the frame after all."""
+    frame.image_ids.pop()
+    frame.download_failures = 1
+    frame.fail_after_start = True
+    send = art_frame_device._send_command  # noqa: SLF001
+
+    async def arrive_anyway(key, retry=None):
+        reply = await send(key, retry)
+        if key.upper() == "570F7B00" and reply[3] == 3:
+            frame.image_ids.append(0x1A)
+        return reply
+
+    art_frame_device._send_command = arrive_anyway  # noqa: SLF001
+    result = await async_download_image(art_frame_device, 0x1A)
+    assert result["current_image_id"] == 0x1A
+    assert frame.sent.count("570F7A01011A") == 1
+
+
+async def test_download_command_reply_lost(frame, art_frame_device) -> None:
+    """The frame got the download command but its reply was lost: resume
+    polling rather than sending the command again."""
+    frame.image_ids.pop()
+    send = art_frame_device._send_command  # noqa: SLF001
+
+    async def lose_download_reply(key, retry=None):
+        reply = await send(key, retry)
+        if key.upper().startswith("570F7A0101"):
+            raise BleakError("Device unexpectedly disconnected")
+        return reply
+
+    art_frame_device._send_command = lose_download_reply  # noqa: SLF001
+    result = await async_download_image(art_frame_device, 0x1A)
     assert result["current_image_id"] == 0x1A
     assert frame.sent.count("570F7A01011A") == 1
 
