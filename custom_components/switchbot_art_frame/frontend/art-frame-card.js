@@ -177,7 +177,9 @@ class SwitchBotArtFrameCard extends HTMLElement {
       el.classList.remove("full");
       return;
     }
-    const full = n >= MAX_IMAGES;
+    // free_slots follows the frame's own count, which on some frames is one
+    // more than the images it holds; show_image goes by that too.
+    const full = n >= MAX_IMAGES || st.attributes.free_slots === 0;
     el.textContent = full
       ? `${n} of ${MAX_IMAGES} images \u00b7 sending replaces the oldest`
       : `${n} of ${MAX_IMAGES} images`;

@@ -101,6 +101,11 @@ Its attributes are:
 - `current_image_id`: the image on display;
 - `free_slots`: how many more images the frame can hold.
 
+Some frames list one entry more than they hold: a `0`, or the newest image a
+second time. The sensor leaves those out of `image_ids` and its count. Such a
+frame still counts as full at 10 entries, so with 9 images `free_slots` is 0
+and `show_image` makes room first. The SwitchBot app may show a free place.
+
 The sensor updates when the frame advertises over Bluetooth and after each
 action. `homeassistant.update_entity` on the sensor reads the frame's status
 straight away.

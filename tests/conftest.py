@@ -85,6 +85,11 @@ class FrameSimulator:
     idle_polls: int = 0
     # Progress polls (counted from 1 for each download) the frame refuses.
     refused_polls: set[int] = field(default_factory=set)
+    # Imitates frames that list one entry more than they hold (issue #8): the
+    # status reply's count is one too high, so the slot after the list is read
+    # too. That slot holds 0, or the newest download while it's on the frame.
+    extra_entry: bool = False
+    _leftover: int = 0
     _downloading: int | None = None
     _failing: bool = False
     _started: bool = False
@@ -114,6 +119,7 @@ class FrameSimulator:
             state, pct, code = 1, 0, 0x0A
         else:
             ids.append(self._downloading)
+            self._leftover = self._downloading
             self._downloading = None
             state, pct, code = 2, 100, 0x0F
         slots = bytes(ids).ljust(10, b"\x00")
@@ -134,10 +140,13 @@ class FrameSimulator:
 
     def _answer(self, key: str) -> bytes:
         if key == "5702":  # basic info
-            ids = self.image_ids
+            ids = list(self.image_ids)
+            if self.extra_entry:
+                ids.append(self._leftover)
+            # The reply has room for ten IDs; any more are cut off.
             payload = bytes(
                 [self.battery, 14, 1, 0x10, self.current, len(ids), *ids]
-            ).ljust(16, b"\x00")
+            ).ljust(16, b"\x00")[:16]
             return b"\x01" + payload
         if key.startswith("570F7A0102"):  # delete
             image_id = int(key[10:12], 16)
@@ -145,6 +154,8 @@ class FrameSimulator:
                 self.image_ids.remove(image_id)
                 if self.current == image_id:
                     self.current = 0
+                if self._leftover == image_id:
+                    self._leftover = 0
             return b"\x01" + bytes([image_id, 0x1E])
         if key == "570F7A00":  # start Wi-Fi, sent before a download
             return b"\x01\x1e"

@@ -9,8 +9,79 @@ from custom_components.switchbot_art_frame.art_frame import (
     ImageSelectionError,
     async_delete_image,
     async_download_image,
+    async_refresh,
     resolve_image_id,
+    stored_images,
 )
+
+EIGHT = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17]
+
+
+@pytest.mark.parametrize(
+    ("listed", "expected"),
+    [
+        (EIGHT, EIGHT),
+        ([*EIGHT, 0], EIGHT),
+        ([*EIGHT, 0x1A, 0x1A], [*EIGHT, 0x1A]),
+        ([0x10, 0x1B, 0x1B, 0x1A], [0x10, 0x1B, 0x1A]),
+        ([], []),
+    ],
+)
+def test_stored_images(listed, expected) -> None:
+    assert stored_images(listed) == expected
+
+
+async def test_refresh_clean_list_unchanged(frame, art_frame_device) -> None:
+    status = await async_refresh(art_frame_device)
+    assert status.image_ids == frame.image_ids
+    assert status.entries == 10
+
+
+async def test_refresh_extra_entry(frame, art_frame_device) -> None:
+    """A frame listing 8 images and a 0 holds 8 images (issue #8)."""
+    frame.image_ids = list(EIGHT)
+    frame.current = 0x17
+    frame.extra_entry = True
+    status = await async_refresh(art_frame_device)
+    assert status.image_ids == EIGHT
+    assert status.current == 0x17
+    assert status.entries == 9
+    assert art_frame_device.get_all_images_index() == [*EIGHT, 0]  # cache as listed
+
+
+async def test_refresh_list_cut_short(frame, art_frame_device) -> None:
+    """Ten images and an extra entry don't fit the reply."""
+    frame.extra_entry = True
+    with pytest.raises(ArtFrameError, match="more images than"):
+        await async_refresh(art_frame_device)
+
+
+async def test_delete_newest_skips_extra_entry(frame, art_frame_device) -> None:
+    frame.image_ids = list(EIGHT)
+    frame.current = 0x10
+    frame.extra_entry = True
+    result = await async_delete_image(art_frame_device, "newest")
+    assert result["deleted_image_id"] == 0x17
+    assert "570F7A010200" not in frame.sent
+    assert result["remaining_image_ids"] == EIGHT[:-1]
+
+
+async def test_download_with_extra_entry(frame, art_frame_device) -> None:
+    """The new image is listed twice; it's reported once, and fills the frame."""
+    frame.image_ids = list(EIGHT)
+    frame.extra_entry = True
+    result = await async_download_image(art_frame_device, 0x1A)
+    assert result["image_ids"] == [*EIGHT, 0x1A]
+    assert art_frame_device.get_all_images_index() == [*EIGHT, 0x1A, 0x1A]
+
+    # Nine images, but ten entries: full by the frame's count.
+    with pytest.raises(ImageSelectionError, match="is full"):
+        await async_download_image(art_frame_device, 0x1B)
+
+    # Deleting it clears both entries, and the 0 comes back.
+    result = await async_delete_image(art_frame_device, 0x1A)
+    assert result["remaining_image_ids"] == EIGHT
+    assert art_frame_device.get_all_images_index() == [*EIGHT, 0]
 
 
 @pytest.mark.parametrize(
@@ -102,7 +173,7 @@ async def test_download_can_skip_show(frame, art_frame_device) -> None:
 
 
 async def test_download_frame_full(frame, art_frame_device) -> None:
-    with pytest.raises(ImageSelectionError, match="already holds"):
+    with pytest.raises(ImageSelectionError, match="is full"):
         await async_download_image(art_frame_device, 0x1A)
     assert "570F7A00" not in frame.sent
 

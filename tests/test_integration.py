@@ -276,6 +276,31 @@ async def test_sensor(hass: HomeAssistant, setup_entry, core_entry) -> None:
     assert dr.async_entries_for_config_entry(dev_reg, setup_entry.entry_id) == []
 
 
+async def test_sensor_extra_entry(hass: HomeAssistant, setup_entry, frame) -> None:
+    """A frame listing one entry more than it holds (issue #8)."""
+    frame.extra_entry = True
+    frame.image_ids = frame.image_ids[:8]
+    frame.current = 0x17
+    await _update(hass)
+    state = hass.states.get(ENTITY_ID)
+    assert state.state == "8"
+    assert state.attributes["image_ids"] == list(range(0x10, 0x18))
+    assert state.attributes["free_slots"] == 1  # the frame lists 9 entries
+
+    frame.image_ids.append(0x18)
+    await _update(hass)
+    state = hass.states.get(ENTITY_ID)
+    assert state.state == "9"
+    assert state.attributes["free_slots"] == 0
+
+
+async def _update(hass: HomeAssistant) -> None:
+    await async_setup_component(hass, "homeassistant", {})
+    await hass.services.async_call(
+        "homeassistant", "update_entity", {"entity_id": ENTITY_ID}, blocking=True
+    )
+
+
 async def test_delete_action(hass: HomeAssistant, setup_entry, frame) -> None:
     response = await hass.services.async_call(
         DOMAIN,

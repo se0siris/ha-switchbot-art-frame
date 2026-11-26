@@ -28,6 +28,7 @@ from .art_frame import (
     async_delete_image,
     async_download_image,
     async_refresh,
+    stored_images,
 )
 from .const import CONF_SWITCHBOT_ENTRY_ID, MAX_LOCAL_IMAGES, SWITCHBOT_CLOUD_DOMAIN
 from .workflow import async_show_image
@@ -114,20 +115,33 @@ class ArtFrameLocalImagesSensor(
     def _handle_device_update(self) -> None:
         self.async_write_ha_state()
 
+    def _image_ids(self) -> list[int] | None:
+        """The stored images, from the device's cache.
+
+        The cache holds the frame's list as it came (the core integration
+        writes it too), so it is cleaned here as async_refresh does.
+        """
+        listed = self._device.get_all_images_index()
+        return stored_images(listed) if listed is not None else None
+
     @property
     def native_value(self) -> int | None:
         """Return the number of locally stored images."""
-        return self._device.get_total_images()
+        image_ids = self._image_ids()
+        return len(image_ids) if image_ids is not None else None
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
         """Return the image IDs."""
-        image_ids = self._device.get_all_images_index()
-        total = self._device.get_total_images()
+        # Free slots follow the frame's own count, as the actions do (see
+        # FrameStatus.entries), so they can be fewer than 10 minus the images.
+        entries = self._device.get_total_images()
         return {
-            "image_ids": list(image_ids) if image_ids is not None else None,
+            "image_ids": self._image_ids(),
             "current_image_id": self._device.get_current_image_index(),
-            "free_slots": MAX_LOCAL_IMAGES - total if total is not None else None,
+            "free_slots": (
+                max(MAX_LOCAL_IMAGES - entries, 0) if entries is not None else None
+            ),
         }
 
     @callback

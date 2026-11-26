@@ -123,6 +123,31 @@ async def test_full_frame_without_make_room(frame, art_frame_device) -> None:
         )
 
 
+async def test_extra_entry_counts_as_full(frame, art_frame_device) -> None:
+    """Nine images listed as ten entries (issue #8): full by the frame's count."""
+    frame.image_ids = frame.image_ids[:9]
+    frame.extra_entry = True
+    account = FakeAccount(frame, records_for(frame.image_ids))
+
+    async def refuse(url):
+        raise AssertionError("should not upload")
+
+    with pytest.raises(ImageSelectionError, match="lists 10 images"):
+        await async_show_image(
+            art_frame_device, account, refuse, "https://x/a.jpg", make_room=False
+        )
+
+    async def upload(url):
+        account.add_upload(0x1A)
+
+    result = await async_show_image(
+        art_frame_device, account, upload, "https://x/a.jpg"
+    )
+    assert result["deleted_image_id"] == 0x10
+    assert result["removed_pending_uploads"] == []
+    assert result["image_ids"] == [*range(0x11, 0x19), 0x1A]
+
+
 async def test_cloud_leftovers_removed_pending_kept(frame, art_frame_device) -> None:
     frame.image_ids = frame.image_ids[:5]
     records = records_for(frame.image_ids)

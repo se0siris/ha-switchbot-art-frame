@@ -7,9 +7,10 @@ moved into PySwitchbot later.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from bleak.exc import BleakError
 from switchbot import SwitchbotOperationError
@@ -87,19 +88,49 @@ def resolve_image_id(
     return int(target)
 
 
-async def async_refresh(device: SwitchbotArtFrame) -> tuple[list[int], int]:
-    """Read the frame's status; return (image IDs, current image ID).
+class FrameStatus(NamedTuple):
+    """The frame's image list, as read by async_refresh."""
+
+    image_ids: list[int]  # oldest first, without 0 or repeats (stored_images)
+    current: int  # the image on display
+    # How many entries the frame listed, which can be one more than it holds.
+    # The frame counts as full by this, as its reply has room for only
+    # MAX_LOCAL_IMAGES entries.
+    entries: int
+
+
+def stored_images(listed: Iterable[int]) -> list[int]:
+    """The images in the frame's image list, without 0 or repeats.
+
+    Some frames list one entry more than they hold: a 0, or the newest image
+    a second time. 0 isn't an image ID. Keeps the frame's order.
+    """
+    return list(dict.fromkeys(image_id for image_id in listed if image_id))
+
+
+async def async_refresh(device: SwitchbotArtFrame) -> FrameStatus:
+    """Read the frame's status.
 
     Uses the reply directly rather than the device's cached data, which
     PySwitchbot only stores once it has seen an advertisement. The device's
     cache is still updated so its subscribers (our sensor) refresh.
     """
-    info = await device.get_basic_info()
+    try:
+        info = await device.get_basic_info()
+    except IndexError as err:
+        # PySwitchbot reads as many IDs as the frame's count says.
+        raise ArtFrameError(
+            "The frame listed more images than its status reply holds"
+        ) from err
     if not info:
         raise ArtFrameError("Could not read the image list from the frame")
     device._update_parsed_data(info)  # noqa: SLF001
     device._fire_callbacks()  # noqa: SLF001
-    return list(info["all_images_index"]), info["current_image_index"]
+    listed = list(info["all_images_index"])
+    image_ids = stored_images(listed)
+    if image_ids != listed:
+        _LOGGER.debug("The frame listed images %s; using %s", listed, image_ids)
+    return FrameStatus(image_ids, info["current_image_index"], len(listed))
 
 
 async def async_delete_image(
@@ -110,7 +141,7 @@ async def async_delete_image(
     If the image is the one on display and others exist, the frame is first
     switched to the next image, so it is never left showing a deleted image.
     """
-    image_ids, current = await async_refresh(device)
+    image_ids, current, _ = await async_refresh(device)
     image_id = resolve_image_id(target, image_ids, current)
 
     switched_to: int | None = None
@@ -126,7 +157,7 @@ async def async_delete_image(
         device, COMMAND_DELETE_IMAGE.format(image_id), f"delete image {image_id}"
     )
 
-    remaining, _ = await async_refresh(device)
+    remaining = (await async_refresh(device)).image_ids
     if image_id in remaining:
         raise ArtFrameError(
             f"Frame accepted the delete but still lists image {image_id}"
@@ -166,10 +197,11 @@ async def async_download_image(
     downloading, the command is never sent twice. Before reporting a failure
     the frame's image list is checked, in case the image arrived anyway.
     """
-    image_ids, _ = await async_refresh(device)
-    if len(image_ids) >= MAX_LOCAL_IMAGES:
+    image_ids, _, entries = await async_refresh(device)
+    if entries >= MAX_LOCAL_IMAGES:
         raise ImageSelectionError(
-            f"The frame already holds {MAX_LOCAL_IMAGES} images; delete one first"
+            f"The frame is full: it already lists {MAX_LOCAL_IMAGES} images; "
+            "delete one first"
         )
     if image_id in image_ids:
         raise ImageSelectionError(f"Image ID {image_id} is already on the frame")
@@ -211,7 +243,7 @@ async def async_download_image(
     if show:
         await _send(device, COMMAND_SET_IMAGE.format(f"{image_id:02X}"), "show it")
 
-    remaining, current = await async_refresh(device)
+    remaining, current, _ = await async_refresh(device)
     return {
         "image_id": image_id,
         "image_ids": remaining,
@@ -305,7 +337,7 @@ async def _async_downloading(device: SwitchbotArtFrame) -> bool:
 async def _async_image_arrived(device: SwitchbotArtFrame, image_id: int) -> bool:
     """Whether the image is on the frame (False if the list can't be read)."""
     try:
-        image_ids, _ = await async_refresh(device)
+        image_ids = (await async_refresh(device)).image_ids
     except (ArtFrameError, SwitchbotOperationError, BleakError) as err:
         _LOGGER.debug("Couldn't read the image list: %s", err)
         return False

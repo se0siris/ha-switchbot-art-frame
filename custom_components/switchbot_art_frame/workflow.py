@@ -62,7 +62,7 @@ async def async_show_image(
 
     `image` is passed unchanged to `upload` (the Cloud API parameters).
     """
-    frame_ids, _ = await async_refresh(device)
+    frame_ids, _, entries = await async_refresh(device)
     removed = await async_remove_cloud_leftovers(account, frame_ids)
     album = await account.async_list_images()  # newest first
 
@@ -75,11 +75,17 @@ async def async_show_image(
         if img.get("status") == STATUS_PENDING
         and img.get("imageIndex") not in frame_ids
     ]
-    frame_full = len(frame_ids) >= MAX_LOCAL_IMAGES
+    # Full by the frame's own count (see FrameStatus.entries).
+    frame_full = entries >= MAX_LOCAL_IMAGES
     excess = len(frame_ids) - frame_full + len(pending) - (MAX_LOCAL_IMAGES - 1)
     stale = pending[::-1][: max(excess, 0)]  # oldest first
 
-    if (frame_full or stale) and not make_room:
+    if frame_full and not make_room:
+        raise ImageSelectionError(
+            f"No room: the frame lists {entries} images (limit "
+            f"{MAX_LOCAL_IMAGES}); delete one first or allow make_room"
+        )
+    if stale and not make_room:
         raise ImageSelectionError(
             f"No room: the frame holds {len(frame_ids)} images and SwitchBot's "
             f"cloud has {len(pending)} more waiting to download (limit "
